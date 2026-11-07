@@ -1,6 +1,7 @@
 #include "ImageDecode.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 
