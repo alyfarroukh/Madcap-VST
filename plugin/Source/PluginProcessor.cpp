@@ -12,11 +12,14 @@ constexpr int kScratch = 4096;
 
 juce::AudioProcessor::BusesProperties MadcapProcessor::makeBuses()
 {
-    // Instrument: stereo out. The input bus is only for REC (sidechain in a DAW, the
-    // microphone in the Standalone app), so it is off by default inside a DAW.
+    // Instrument: stereo out. Audio inputs are only for REC:
+    //  - bus 0 "Input" (main): the audio interface in the Standalone app; off inside a DAW
+    //  - bus 1 "Sidechain" (aux): where DAWs (LUNA, Cubase, Logic, Reaper, ...) send a
+    //    sidechain / key input. VST3 hosts only route sidechains to an aux bus, never to bus 0.
     const bool standalone = juce::PluginHostType::getPluginLoadedAs() == juce::AudioProcessor::wrapperType_Standalone;
     return juce::AudioProcessor::BusesProperties()
-        .withInput("Sidechain", juce::AudioChannelSet::stereo(), standalone)
+        .withInput("Input", juce::AudioChannelSet::stereo(), standalone)
+        .withInput("Sidechain", juce::AudioChannelSet::stereo(), !standalone)
         .withOutput("Output", juce::AudioChannelSet::stereo(), true);
 }
 
@@ -114,35 +117,55 @@ void MadcapProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     // 1) the record input (sidechain / audio interface): meter it always, record it when armed,
     //    before the buffer is overwritten by the output
-    if (getBusCount(true) > 0) {
-        auto in = getBusBuffer(buffer, true, 0);
-        const int ch = in.getNumChannels();
-        if (ch > 0 && n > 0) {
-            const int sel = recChannel_.load(std::memory_order_relaxed);    // 0 = all, 1 = in 1, 2 = in 2
+    // Every enabled input bus (main input and sidechain) is summed. Channels are read straight
+    // from the host buffer (no AudioBuffer copies: those would allocate on the audio thread).
+    std::array<int, 2> busFirst{}, busCount{};
+    int numIns = 0;
+    for (int b = 0; b < std::min(2, getBusCount(true)); ++b) {
+        auto* bus = getBus(true, b);
+        if (bus == nullptr || !bus->isEnabled() || bus->getNumberOfChannels() <= 0) continue;
+        const int first = getChannelIndexInProcessBlockBuffer(true, b, 0);
+        const int count = std::min(bus->getNumberOfChannels(), buffer.getNumChannels() - first);
+        if (first < 0 || count <= 0) continue;
+        busFirst[(size_t)numIns] = first;
+        busCount[(size_t)numIns] = count;
+        ++numIns;
+    }
+    if (numIns > 0 && n > 0) {
+        const int sel = recChannel_.load(std::memory_order_relaxed);    // 0 = all, 1 = in 1, 2 = in 2
+        auto range = [&](int bi) {
+            const int ch = busCount[(size_t)bi];
             const int c0 = sel == 2 ? std::min(1, ch - 1) : 0;
-            const int c1 = sel == 0 ? ch : c0 + 1;
-            float pk = 0.0f;
-            for (int c = c0; c < c1; ++c) pk = std::max(pk, in.getMagnitude(c, 0, n));
-            if (pk > inPeak_.load(std::memory_order_relaxed)) inPeak_.store(pk, std::memory_order_relaxed);
+            return std::pair<int, int>{ busFirst[(size_t)bi] + c0, busFirst[(size_t)bi] + (sel == 0 ? ch : c0 + 1) };
+        };
+        float pk = 0.0f;
+        for (int bi = 0; bi < numIns; ++bi) {
+            const auto [c0, c1] = range(bi);
+            for (int c = c0; c < c1; ++c) pk = std::max(pk, buffer.getMagnitude(c, 0, n));
+        }
+        if (pk > inPeak_.load(std::memory_order_relaxed)) inPeak_.store(pk, std::memory_order_relaxed);
 
-            if (recActive_.load(std::memory_order_acquire)) {
-                recWriting_.store(true, std::memory_order_seq_cst);
-                if (recActive_.load(std::memory_order_seq_cst)) {
-                    const int len = recLen_.load(std::memory_order_relaxed);
-                    const int k = std::min(n, (int)recBuf_.size() - len);
-                    if (k > 0) {
-                        for (int i = 0; i < k; ++i) {
-                            float s = 0.0f;
-                            for (int c = c0; c < c1; ++c) s += in.getReadPointer(c)[i];
-                            recBuf_[(size_t)(len + i)] = s;   // normalised when the take ends
+        if (recActive_.load(std::memory_order_acquire)) {
+            recWriting_.store(true, std::memory_order_seq_cst);
+            if (recActive_.load(std::memory_order_seq_cst)) {
+                const int len = recLen_.load(std::memory_order_relaxed);
+                const int k = std::min(n, (int)recBuf_.size() - len);
+                if (k > 0) {
+                    float* dst = recBuf_.data() + len;
+                    std::fill(dst, dst + k, 0.0f);
+                    for (int bi = 0; bi < numIns; ++bi) {
+                        const auto [c0, c1] = range(bi);
+                        for (int c = c0; c < c1; ++c) {
+                            const float* src = buffer.getReadPointer(c);
+                            for (int i = 0; i < k; ++i) dst[i] += src[i];   // normalised when the take ends
                         }
-                        recPeak_.store(std::max(recPeak_.load(std::memory_order_relaxed), pk), std::memory_order_relaxed);
-                        recLen_.store(len + k, std::memory_order_release);
                     }
-                    if (len + k >= (int)recBuf_.size()) recActive_.store(false);
+                    recPeak_.store(std::max(recPeak_.load(std::memory_order_relaxed), pk), std::memory_order_relaxed);
+                    recLen_.store(len + k, std::memory_order_release);
                 }
-                recWriting_.store(false, std::memory_order_seq_cst);
+                if (len + k >= (int)recBuf_.size()) recActive_.store(false);
             }
+            recWriting_.store(false, std::memory_order_seq_cst);
         }
     }
 
