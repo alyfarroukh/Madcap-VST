@@ -1,0 +1,150 @@
+name: Build Madcap
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PLUGINVAL_VERSION: v1.0.4
+
+jobs:
+  # ---------------------------------------------------------------- DSP unit tests
+  dsp-tests:
+    name: DSP tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: Linux ASan+UBSan, sanitize: "ON" }
+          - { os: windows-latest, name: Windows,          sanitize: "OFF" }
+          - { os: macos-latest,   name: macOS,            sanitize: "OFF" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-tests
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DMADCAP_BUILD_PLUGIN=OFF
+          -DMADCAP_BUILD_TESTS=ON
+          -DMADCAP_SANITIZE=${{ matrix.sanitize }}
+
+      - name: Build
+        run: cmake --build build-tests --config RelWithDebInfo --parallel 4
+
+      - name: Run tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-tests -C RelWithDebInfo --output-on-failure
+
+  # ---------------------------------------------------------------- plugin builds
+  plugin:
+    name: Plugin (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, name: Windows }
+          - { os: macos-latest,   name: macOS }
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------- Windows
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -A x64 -DMADCAP_BUILD_TESTS=OFF
+
+      # ---------- macOS: universal (arm64 + x86_64)
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: >
+          cmake -S . -B build -G Xcode
+          -DMADCAP_BUILD_TESTS=OFF
+          "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY=-
+          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO
+
+      - name: Build
+        run: cmake --build build --config Release --target Madcap_All --parallel 4
+
+      - name: Locate artefacts
+        shell: bash
+        run: |
+          ART=build/plugin/Madcap_artefacts/Release
+          ls -R "$ART" | head -50
+          echo "ART=$ART" >> "$GITHUB_ENV"
+
+      # ---------- macOS: ad-hoc sign + check that it really is universal
+      - name: Ad-hoc sign (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for b in "$ART/VST3/Madcap.vst3" "$ART/AU/Madcap.component" "$ART/Standalone/Madcap.app"; do
+            codesign --force --deep --sign - --timestamp=none "$b"
+            codesign --verify --deep --strict --verbose=2 "$b"
+          done
+          lipo -info "$ART/VST3/Madcap.vst3/Contents/MacOS/Madcap"
+          lipo -info "$ART/AU/Madcap.component/Contents/MacOS/Madcap"
+          lipo -info "$ART/Standalone/Madcap.app/Contents/MacOS/Madcap"
+
+      # ---------- pluginval (strictness 5)
+      - name: pluginval (Windows, VST3)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
+          7z x pluginval.zip -opluginval > /dev/null
+          ./pluginval/pluginval.exe --strictness-level 5 --validate-in-process --timeout-ms 600000 \
+            --output-dir pluginval-logs --validate "$ART/VST3/Madcap.vst3"
+
+      - name: pluginval + auval (macOS, VST3 + AU)
+        if: runner.os == 'macOS'
+        run: |
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
+          unzip -q pluginval.zip -d pluginval
+          PV=pluginval/pluginval.app/Contents/MacOS/pluginval
+          $PV --strictness-level 5 --validate-in-process --timeout-ms 600000 \
+            --output-dir pluginval-logs --validate "$ART/VST3/Madcap.vst3"
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$ART/AU/Madcap.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 2
+          auval -v aumu Mcap Mdcp
+          $PV --strictness-level 5 --validate-in-process --timeout-ms 600000 \
+            --output-dir pluginval-logs --validate ~/Library/Audio/Plug-Ins/Components/Madcap.component
+
+      - name: Upload pluginval logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pluginval-logs-${{ matrix.name }}
+          path: pluginval-logs
+          if-no-files-found: ignore
+
+      # ---------- package
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "$env:ART/VST3/Madcap.vst3" -DestinationPath dist/Madcap-Windows-VST3.zip
+          Compress-Archive -Path "$env:ART/Standalone/Madcap.exe" -DestinationPath dist/Madcap-Windows-Standalone.zip
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent "$ART/VST3/Madcap.vst3" dist/Madcap-macOS-VST3.zip
+          ditto -c -k --keepParent "$ART/AU/Madcap.component" dist/Madcap-macOS-AU.zip
+          ditto -c -k --keepParent "$ART/Standalone/Madcap.app" dist/Madcap-macOS-Standalone.zip
+
+      - name: Upload builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: Madcap-${{ matrix.name }}
+          path: dist/*.zip
+          if-no-files-found: error
