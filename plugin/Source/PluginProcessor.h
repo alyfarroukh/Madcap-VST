@@ -92,7 +92,7 @@ private:
     void installSampleIntoEngine(bool now);
     void installImageIntoEngine(bool now);
     void setStatus(const juce::String& s);
-    void applyPresetValues(const std::vector<std::pair<int, float>>& values);
+    void applyPresetValues(const std::vector<std::pair<int, double>>& values);
     std::unique_ptr<juce::XmlElement> createStateXml(bool includeMedia);
     void restoreStateXml(const juce::XmlElement& xml);
     void handleMidi(const juce::MidiMessage& m);

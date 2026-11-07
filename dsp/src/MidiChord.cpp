@@ -1,6 +1,10 @@
 #include "madcap/MidiChord.h"
 #include "theory.h"
 
+#include <cstddef>
+
+using std::size_t;
+
 namespace madcap {
 
 void MidiChordState::noteOn(int note, float velocity01) noexcept

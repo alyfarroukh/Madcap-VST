@@ -8,7 +8,7 @@ namespace madcap {
 
 struct FactoryPreset {
     const char* name;
-    std::vector<std::pair<int, float>> values;   // parameter index -> value (on top of the defaults)
+    std::vector<std::pair<int, double>> values;   // parameter index -> value (on top of the defaults)
     int poster = -1;                             // >= 0: load this built-in poster (image presets)
 };
 

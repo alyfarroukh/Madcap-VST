@@ -73,7 +73,7 @@ void RingKnob::paint(juce::Graphics& g)
     if (dragging_ || isMouseButtonDown()) {   // value bubble
         auto txt = valueText();
         g.setFont(font(12.0f, Weight::Bold, 0.02f));
-        const float w = juce::jmin(getWidth() - 2.0f, juce::jmax(d * 0.9f, (float)txt.length() * 6.5f + 8.0f));
+        const float w = juce::jmin((float)getWidth() - 2.0f, juce::jmax(d * 0.9f, (float)txt.length() * 6.5f + 8.0f));
         auto bub = juce::Rectangle<float>(w, 17.0f).withCentre(c);
         g.setColour(colours::bg.withAlpha(0.92f));
         g.fillRoundedRectangle(bub, 3.0f);
@@ -122,14 +122,14 @@ void RingKnob::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelD
     const float dir = (w.deltaY != 0.0f ? w.deltaY : w.deltaX) * (w.isReversed ? -1.0f : 1.0f);
     if (dir == 0.0f) return;
     float step = e.mods.isShiftDown() ? 0.005f : 0.03f;
-    if (GS_PARAMS[index_].discrete) step = 1.0f / juce::jmax(1, numSteps() - 1);
+    if (GS_PARAMS[index_].discrete) step = 1.0f / (float)juce::jmax(1, numSteps() - 1);
     setValueComplete(param_.convertFrom0to1(juce::jlimit(0.0f, 1.0f, norm() + (dir > 0 ? step : -step))));
 }
 
 bool RingKnob::keyPressed(const juce::KeyPress& k)
 {
     float step = k.getModifiers().isShiftDown() ? 0.005f : 0.025f;
-    if (GS_PARAMS[index_].discrete) step = 1.0f / juce::jmax(1, numSteps() - 1);
+    if (GS_PARAMS[index_].discrete) step = 1.0f / (float)juce::jmax(1, numSteps() - 1);
     const int code = k.getKeyCode();
     if (code == juce::KeyPress::upKey || code == juce::KeyPress::rightKey) step = +step;
     else if (code == juce::KeyPress::downKey || code == juce::KeyPress::leftKey) step = -step;

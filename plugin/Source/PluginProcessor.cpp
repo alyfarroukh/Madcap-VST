@@ -305,8 +305,8 @@ void MadcapProcessor::cropToCut()
     undo_.beginNewTransaction("Crop");
     setValue(P_TRIM_IN, 0.0f);
     setValue(P_TRIM_OUT, 1.0f);
-    loader_.addJob([this, cut = std::move(cut), rate, name]() mutable {
-        sample_.set(std::move(cut), rate, name, false);
+    loader_.addJob([this, samples = std::move(cut), rate, name]() mutable {
+        sample_.set(std::move(samples), rate, name, false);
         installSampleIntoEngine(false);
         setStatus("Cropped");
     });
@@ -349,8 +349,8 @@ void MadcapProcessor::stopRecording()
     setValue(P_TRIM_IN, 0.0f);
     setValue(P_TRIM_OUT, 1.0f);
     setValue(P_SRC, 0.0f);
-    loader_.addJob([this, take = std::move(take), rate, name]() mutable {
-        sample_.set(std::move(take), rate, name, false);
+    loader_.addJob([this, samples = std::move(take), rate, name]() mutable {
+        sample_.set(std::move(samples), rate, name, false);
         installSampleIntoEngine(false);
         setStatus(name + " is the new sample");
     });
@@ -421,12 +421,12 @@ const juce::String MadcapProcessor::getProgramName(int index)
 
 juce::String MadcapProcessor::currentPresetName() const { return presetName_; }
 
-void MadcapProcessor::applyPresetValues(const std::vector<std::pair<int, float>>& values)
+void MadcapProcessor::applyPresetValues(const std::vector<std::pair<int, double>>& values)
 {
     for (int p = 0; p < P_COUNT; ++p)
         if (!presetKeepsParameter(p)) setValue(p, GS_PARAMS[p].def);
     for (const auto& [p, v] : values)
-        if (p >= 0 && p < P_COUNT && !presetKeepsParameter(p)) setValue(p, v);
+        if (p >= 0 && p < P_COUNT && !presetKeepsParameter(p)) setValue(p, (float)v);
 }
 
 void MadcapProcessor::loadFactoryPreset(int index)

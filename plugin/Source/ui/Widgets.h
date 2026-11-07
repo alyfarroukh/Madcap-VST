@@ -148,7 +148,7 @@ public:
     void mouseUp(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
-    void setDisplayOverride(float bpm, bool host) { if (bpm != shown_ || host != host_) { shown_ = bpm; host_ = host; repaint(); } }
+    void setDisplayOverride(float bpm, bool host) { if (!juce::exactlyEqual(bpm, shown_) || host != host_) { shown_ = bpm; host_ = host; repaint(); } }
 
 private:
     void textEditorReturnKeyPressed(juce::TextEditor&) override;

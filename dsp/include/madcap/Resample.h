@@ -1,13 +1,14 @@
 // Offline helpers for sources: resampling, mono mixdown, normalising, image grids.
 // Framework-free; never call these on the audio thread (they allocate).
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
 namespace madcap {
 
 // Band-limited windowed-sinc resampler (mono). Returns the input unchanged when rates match.
-std::vector<float> resampleMono(const float* in, size_t n, double srcRate, double dstRate);
+std::vector<float> resampleMono(const float* in, std::size_t n, double srcRate, double dstRate);
 
 // Peak-normalise in place to the given linear peak (no-op for silence).
 void normalizePeak(std::vector<float>& buf, float peak = 0.89f);

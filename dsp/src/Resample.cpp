@@ -3,6 +3,7 @@
 #include "imgsynth.h"
 #include "posters.h"
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <cstdlib>
 
@@ -40,7 +41,7 @@ struct SincTable {
 };
 } // namespace
 
-std::vector<float> resampleMono(const float* in, size_t n, double srcRate, double dstRate)
+std::vector<float> resampleMono(const float* in, std::size_t n, double srcRate, double dstRate)
 {
     if (!in || n == 0) return {};
     if (srcRate <= 0 || dstRate <= 0 || std::abs(srcRate - dstRate) < 1e-6) return std::vector<float>(in, in + n);

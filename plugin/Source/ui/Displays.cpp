@@ -55,7 +55,9 @@ void WaveformView::tick()
     const float pp = ui.previewPos.load(), in = proc_.value(P_TRIM_IN), out = proc_.value(P_TRIM_OUT);
     const float rs = ui.regionStart.load(), re = ui.regionEnd.load();
     const int sl = ui.numSlices.load();
-    if (pp != lastPreview_ || in != lastIn_ || out != lastOut_ || rs != lastRs_ || re != lastRe_ || sl != lastSlices_) {
+    using juce::exactlyEqual;
+    if (!exactlyEqual(pp, lastPreview_) || !exactlyEqual(in, lastIn_) || !exactlyEqual(out, lastOut_)
+        || !exactlyEqual(rs, lastRs_) || !exactlyEqual(re, lastRe_) || sl != lastSlices_) {
         lastPreview_ = pp; lastIn_ = in; lastOut_ = out; lastRs_ = rs; lastRe_ = re; lastSlices_ = sl;
         dirty = true;
     }
@@ -187,7 +189,7 @@ void SliceStrip::tick()
     n_ = n;
     for (int i = 0; i <= n; ++i) {
         const float v = ui.bounds[(size_t)i].load();
-        if (v != bounds_[(size_t)i]) { bounds_[(size_t)i] = v; dirty = true; }
+        if (!juce::exactlyEqual(v, bounds_[(size_t)i])) { bounds_[(size_t)i] = v; dirty = true; }
     }
     const int key = juce::roundToInt(proc_.value(P_SLICE_SEL)) * 64 + juce::roundToInt(proc_.value(P_SLICE_SPAN));
     if (key != lastKey_) { lastKey_ = key; dirty = true; }
@@ -734,7 +736,7 @@ RearTouchPad::RearTouchPad(MadcapProcessor& p) : proc_(p), xy_(p, P_CHORD, P_VOI
 void RearTouchPad::tick()
 {
     const float c = proc_.value(P_CHORD), v = proc_.value(P_VOICING);
-    if (c != chord_ || v != voicing_ || touching_) { chord_ = c; voicing_ = v; repaint(); }
+    if (!juce::exactlyEqual(c, chord_) || !juce::exactlyEqual(v, voicing_) || touching_) { chord_ = c; voicing_ = v; repaint(); }
 }
 
 void RearTouchPad::paint(juce::Graphics& g)

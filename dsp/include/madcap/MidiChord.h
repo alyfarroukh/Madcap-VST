@@ -1,6 +1,7 @@
 // MIDI -> harmony state. Framework-free so it can be unit-tested.
 #pragma once
 #include <array>
+#include <cstddef>
 
 namespace madcap {
 
@@ -20,7 +21,7 @@ public:
     void reset() noexcept;
     bool anyHeld() const noexcept { return count_ > 0; }
     int heldCount() const noexcept { return count_; }
-    bool isHeld(int note) const noexcept { return note >= 0 && note < 128 && vel_[(size_t)note] > 0.0f; }
+    bool isHeld(int note) const noexcept { return note >= 0 && note < 128 && vel_[(std::size_t)note] > 0.0f; }
 
     // Chord for the currently held notes. key 0..11, scale index, mode Degree/Root.
     Chord compute(int key, int scale, int mode) const noexcept;

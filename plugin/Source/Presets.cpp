@@ -7,7 +7,7 @@ extern "C" {
 namespace madcap {
 
 namespace {
-constexpr float lane(unsigned bits) { return (float)bits; }
+constexpr double lane(unsigned bits) { return (double)bits; }
 }
 
 const std::vector<FactoryPreset>& factoryPresets()
