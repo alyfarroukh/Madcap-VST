@@ -131,7 +131,9 @@ level meter and the big **PLAY / STOP** transport button.
 * **IMAGE ON** (top left) makes the image sweeper the live input (the SAMPLE tab greys out).
 * ◀ ▶ step through four built-in Bauhaus posters. **LOAD IMAGE** takes PNG, JPG, BMP or GIF
   of any size. The **whole picture** is used at its own aspect ratio, never cropped, and the
-  analysis grid follows its resolution (up to 512 × 256 cells).
+  analysis grid follows its resolution, up to the **GRID RES** setting: 64, 128, 256, 512
+  (default), 1024 or 2048 columns, with half as many rows. Pictures are stored at up to
+  2048 × 1024 so GRID RES 2048 gets every pixel.
 * **TERRAIN** turns the picture into a 3D wireframe landscape (brightness = height, or
   darkness with LISTEN TO DARK) that rolls through the fixed scan line (orange front edge).
 * **SOUND SOURCE:** NOISE (band-passed noise), NOTES (PolyBLEP oscillators) or both.

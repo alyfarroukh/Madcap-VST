@@ -85,10 +85,17 @@ std::vector<float> lumaGridFromABGR(const uint32_t* px, int w, int h, int stride
     return grid;
 }
 
-void lumaGridSize(int w, int h, int& cols, int& rows)
+int gridResolutionColumns(int index)
 {
-    // follow the picture: one column per pixel up to the maximum, never squashing the aspect
-    double sc = std::min({1.0, (double)IMG_COLS_MAX / std::max(w, 1), (double)IMG_ROWS_MAX / std::max(h, 1)});
+    return 64 << std::clamp(index, 0, 5);
+}
+
+void lumaGridSize(int w, int h, int& cols, int& rows, int maxCols)
+{
+    // follow the picture: one cell per pixel up to the maximum, never squashing the aspect
+    maxCols = std::clamp(maxCols, 64, IMG_COLS_MAX);
+    const int maxRows = std::min(maxCols / 2, IMG_ROWS_MAX);
+    double sc = std::min({1.0, (double)maxCols / std::max(w, 1), (double)maxRows / std::max(h, 1)});
     cols = std::clamp((int)std::lround(w * sc), IMG_COLS_MIN, IMG_COLS_MAX);
     rows = std::clamp((int)std::lround(h * sc), IMG_ROWS_MIN, IMG_ROWS_MAX);
 }

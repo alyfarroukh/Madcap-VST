@@ -58,8 +58,9 @@ void Page::resized()
 // In a DAW: the plugin's sidechain bus. Both: which channel(s) to record + a level meter.
 class RecordInputPanel : public juce::Component, public Tickable, private juce::ChangeListener {
 public:
-    explicit RecordInputPanel(MadcapProcessor& p) : proc_(p), meter_(p), settings_("Audio settings")
+    explicit RecordInputPanel(MadcapProcessor& p) : proc_(p), led_(p, "Signal"), meter_(p), settings_("Audio settings")
     {
+        addAndMakeVisible(led_);
         addAndMakeVisible(meter_);
         addAndMakeVisible(channel_);
         channel_.addItemList({ "Record: all inputs (mix)", "Record: input 1 / left", "Record: input 2 / right" }, 1);
@@ -104,19 +105,39 @@ public:
         }
         channel_.setBounds(row2.removeFromLeft(240));
         row2.removeFromLeft(10);
+        led_.setBounds(row2.removeFromLeft(80));
+        row2.removeFromLeft(6);
         meter_.setBounds(row2.reduced(0, 4));
     }
 
     void paint(juce::Graphics& g) override
     {
         drawPanel(g, getLocalBounds().toFloat(), "Record input", colours::orange);
+        // what the host / audio device actually connected to Madcap's inputs
+        drawLabel(g, status_, getLocalBounds().toFloat().reduced(8.0f, 0.0f).withTrimmedTop(3.0f).withHeight(14.0f)
+                                 .withTrimmedLeft(dm_ != nullptr ? 130.0f : 130.0f),
+                  juce::Justification::centredRight, 10.5f, connected_ ? colours::green : colours::red, Weight::Bold);
         if (dm_ == nullptr)
-            drawLabel(g, "REC records Madcap's sidechain input: in your DAW, enable the sidechain and route your mic / guitar track to it",
+            drawLabel(g, connected_ ? "Route your mic / guitar track to Madcap's sidechain input, then press REC"
+                                    : "Your DAW hasn't connected Madcap's sidechain input yet: set the sidechain source to your mic track",
                       getLocalBounds().toFloat().reduced(8.0f, 0.0f).withTrimmedTop(20.0f).withHeight(24.0f),
                       juce::Justification::centredLeft, 11.0f, colours::text, Weight::Medium);
     }
 
-    void tick() override { meter_.tick(); }
+    void tick() override
+    {
+        meter_.tick();
+        led_.tick();
+        const int mainCh = proc_.inputBusChannels(0), scCh = proc_.inputBusChannels(1);
+        juce::String st;
+        if (dm_ != nullptr) st = mainCh > 0 ? "Audio input: " + juce::String(mainCh) + " ch open" : "No audio input open";
+        else {
+            st = scCh > 0 ? "Sidechain connected: " + juce::String(scCh) + " ch" : "Sidechain: not connected";
+            if (mainCh > 0) st << "  |  main input " << mainCh << " ch";
+        }
+        const bool conn = (dm_ != nullptr ? mainCh : scCh + mainCh) > 0;
+        if (st != status_ || conn != connected_) { status_ = st; connected_ = conn; repaint(); }
+    }
 
 private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override { refresh(); }
@@ -184,7 +205,10 @@ private:
     MadcapProcessor& proc_;
     juce::AudioDeviceManager* dm_ = nullptr;
     bool separate_ = true;
+    SignalLed led_;
     InputMeter meter_;
+    juce::String status_;
+    bool connected_ = false;
     juce::ComboBox device_, input_, channel_;
     HudButton settings_;
 };
@@ -327,7 +351,7 @@ public:
           key_(stepper(P_IMG_KEY, {}, true)), scale_(stepper(P_IMG_SCALE, {}, true)),
           low_(stepper(P_IMG_LOW, [](float v) { return midiNoteName(juce::roundToInt(v)); })),
           range_(stepper(P_IMG_RANGE, [](float v) { return juce::String(juce::roundToInt(v)) + " OCT"; })),
-          voices_(stepper(P_IMG_VOICES)),
+          voices_(stepper(P_IMG_VOICES)), res_(seg(P_IMG_RES)),
           steps_(knob(P_IMG_GRID, colours::amber)), decay_(knob(P_IMG_DECAY)), sweep_(knob(P_IMG_SWEEP)),
           level_(knob(P_IMG_LEVEL)), dry_(knob(P_IMG_DRY))
     {
@@ -340,6 +364,8 @@ public:
         hold_.setTooltip("Freeze the 6 s live buffer that the grains and the arp read from");
         sync_.setTooltip("Each step = a 16th note at the tempo, locked to the host bar");
         steps_.setTooltip("Grid steps per sweep: 0 = smooth (held, sliding tones), 1-128 = separate notes per step");
+        res_.setTooltip("Analysis grid resolution: the most columns the sweeper reads (rows = half). "
+                        "The picture is never stretched: smaller pictures keep their own size.");
         input_.setAccent(colours::green);
         input_.setTooltip("Input: SAMPLE or IMAGE (only one plays at a time)");
         prev_.onClick = [this] { stepPoster(-1); };
@@ -373,7 +399,8 @@ public:
         sync_.setBounds(832, 2, 96, 28);
         card_.setBounds(0, 40, 452, 196);
         terrain_.setBounds(0, 242, 452, 222);
-        grid_.setBounds(464, 40, 464, 104);
+        grid_.setBounds(464, 40, 464, 64);
+        res_.setBounds(464, 108, 464, 38);
         mode_.setBounds(464, 150, 236, 40);
         sound_.setBounds(708, 150, 220, 40);
         wave_.setBounds(464, 196, 236, 40);
@@ -421,6 +448,7 @@ private:
     AnalysisGrid& grid_;
     SegmentSwitch &mode_, &sound_, &wave_, &listen_;
     Stepper &key_, &scale_, &low_, &range_, &voices_;
+    SegmentSwitch& res_;
     RingKnob &steps_, &decay_, &sweep_, &level_, &dry_;
     std::unique_ptr<juce::FileChooser> chooser_;
     int version_ = -1;

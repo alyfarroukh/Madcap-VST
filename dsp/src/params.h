@@ -56,6 +56,7 @@ enum {
     P_FOLLOW_HOST,    /* host stop also stops Madcap */
     P_TEMPO_SRC,      /* 0 host, 1 manual (BPM parameter) */
     P_PREVIEW_LOOP,
+    P_IMG_RES,        /* image analysis grid: max columns 64 .. 2048 */
     P_COUNT
 };
 

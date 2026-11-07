@@ -323,7 +323,7 @@ void ImageCard::paint(juce::Graphics& g)
         }
     }
     if (pic_)
-        drawLabel(g, juce::String(pic_->image.getWidth()) + " x " + juce::String(pic_->image.getHeight()) + "  -  grid "
+        drawLabel(g, juce::String(pic_->w) + " x " + juce::String(pic_->h) + "  -  grid "
                      + juce::String(pic_->cols) + " x " + juce::String(pic_->rows),
                   b.reduced(8.0f, 4.0f).removeFromBottom(14.0f), juce::Justification::centredRight, 10.0f,
                   colours::textDim);
@@ -496,6 +496,31 @@ void TerrainView::paint(juce::Graphics& g)
     }
     drawLabel(g, "Low", { a.getX() + 6.0f, a.getBottom() - 16.0f, 40.0f, 14.0f }, juce::Justification::centredLeft, 10.0f, colours::textDim);
     drawLabel(g, "High", { a.getRight() - 46.0f, a.getBottom() - 16.0f, 40.0f, 14.0f }, juce::Justification::centredRight, 10.0f, colours::textDim);
+}
+
+//==============================================================================
+SignalLed::SignalLed(MadcapProcessor& p, const juce::String& label) : proc_(p), label_(label)
+{
+    setTooltip("Input light: green = Madcap is receiving audio on its record input, red = nothing is coming in");
+}
+
+void SignalLed::tick()
+{
+    const unsigned t = proc_.inputSignalTicks();
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (t != last_) { last_ = t; lastSignalMs_ = now; }
+    const bool on = now - lastSignalMs_ < 300.0;
+    if (on != on_) { on_ = on; repaint(); }
+}
+
+void SignalLed::paint(juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    const float r = juce::jmin(5.5f, b.getHeight() * 0.3f);
+    drawLed(g, { b.getX() + r + 4.0f, b.getCentreY() }, r, true, on_ ? colours::green : colours::red);
+    if (label_.isNotEmpty())
+        drawLabel(g, label_, b.withTrimmedLeft(r * 2.0f + 10.0f), juce::Justification::centredLeft, 11.0f,
+                  on_ ? colours::green : colours::red, Weight::Bold);
 }
 
 //==============================================================================

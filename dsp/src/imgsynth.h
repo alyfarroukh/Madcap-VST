@@ -5,8 +5,8 @@
 #define GS_IMGSYNTH_H
 
 /* The analysis grid follows the picture's aspect / resolution, up to these sizes. */
-#define IMG_COLS_MAX 512
-#define IMG_ROWS_MAX 256
+#define IMG_COLS_MAX 2048
+#define IMG_ROWS_MAX 1024
 #define IMG_COLS_MIN 16
 #define IMG_ROWS_MIN 16
 #define IMG_MAX_NOTES 128
@@ -28,7 +28,7 @@ typedef struct {
 } GsImgVoice;
 
 typedef struct {
-    float grid[IMG_ROWS_MAX][IMG_COLS_MAX];  /* luminance 0..1, row 0 = top; cols x rows used */
+    const float *grid;                   /* luminance 0..1, cols x rows, row 0 = top (not owned) */
     int cols, rows;                      /* size of the current picture's grid */
     int has_image;
     int ctl_left;                        /* samples until the next control-rate analysis */
@@ -60,7 +60,8 @@ extern const char *const GS_IMG_SCALE_NAMES[];
 
 void gs_img_init(GsImgSynth *s);
 void gs_img_stop(GsImgSynth *s);
-/* Copy a new cols x rows luminance grid in (row 0 = top, row-major). Audio thread. */
+/* Point the sweeper at a cols x rows luminance grid (row 0 = top, row-major). The grid is not
+ * copied: the caller keeps it alive until another grid replaces it. Audio thread. */
 void gs_img_set_grid(GsImgSynth *s, const float *grid, int cols, int rows);
 /* Fill out[] with the MIDI notes for key/scale/low note/range; returns count. */
 int  gs_img_build_notes(int key, int scale, int low, int range, int *out, int max);

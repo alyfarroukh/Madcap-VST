@@ -4,7 +4,7 @@
 namespace madcap::ui {
 
 TopBar::TopBar(MadcapProcessor& p, std::function<void(int)> onTab)
-    : proc_(p), onTab_(std::move(onTab)), play_(p), meter_(p)
+    : proc_(p), onTab_(std::move(onTab)), play_(p), meter_(p), inLed_(p, "In")
 {
     static const char* const names[6] = {"Sample", "Image", "Grain", "Arp", "FX", "Play"};
     for (int i = 0; i < 6; ++i) {
@@ -17,6 +17,7 @@ TopBar::TopBar(MadcapProcessor& p, std::function<void(int)> onTab)
     for (auto* b : {&prev_, &next_, &presetName_, &save_, &undo_, &redo_, &rnd_}) addAndMakeVisible(*b);
     addAndMakeVisible(play_);
     addAndMakeVisible(meter_);
+    addAndMakeVisible(inLed_);
     prev_.setTooltip("Previous factory preset");
     next_.setTooltip("Next factory preset");
     presetName_.setTooltip("Presets: factory and your own");
@@ -44,7 +45,8 @@ void TopBar::resized()
     undo_.setBounds(530, 42, 52, 18);
     redo_.setBounds(586, 42, 52, 18);
     rnd_.setBounds(642, 42, 56, 18);
-    meter_.setBounds(706, 43, 134, 16);
+    inLed_.setBounds(702, 42, 40, 18);
+    meter_.setBounds(744, 43, 96, 16);
     play_.setBounds(850, 6, 100, 54);
 }
 
@@ -97,6 +99,7 @@ void TopBar::paint(juce::Graphics& g)
 void TopBar::tick()
 {
     meter_.tick();
+    inLed_.tick();
     const bool waiting = proc_.value(P_FOLLOW_HOST) > 0.5f && !proc_.isStandalone() && !proc_.hostIsPlaying();
     play_.setWaitingForHost(waiting && proc_.value(P_PLAY) > 0.5f);
     const auto s = statusLine();

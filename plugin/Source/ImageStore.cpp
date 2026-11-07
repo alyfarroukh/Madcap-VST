@@ -6,6 +6,8 @@ namespace madcap {
 
 namespace {
 
+constexpr int kDisplayW = 1024, kDisplayH = 512;
+
 juce::Image imageFromABGR(const std::vector<uint32_t>& px, int w, int h)
 {
     juce::Image img(juce::Image::RGB, w, h, false, juce::SoftwareImageType());
@@ -19,22 +21,30 @@ juce::Image imageFromABGR(const std::vector<uint32_t>& px, int w, int h)
     return img;
 }
 
-std::shared_ptr<PictureData> makePicture(const std::vector<uint32_t>& px, int w, int h)
+} // namespace
+
+std::shared_ptr<PictureData> ImageStore::makePicture(std::vector<uint32_t> px, int w, int h) const
 {
     auto d = std::make_shared<PictureData>();
-    d->image = imageFromABGR(px, w, h);
-    lumaGridSize(w, h, d->cols, d->rows);
+    d->w = w;
+    d->h = h;
+    juce::Image full = imageFromABGR(px, w, h);
+    // the card never needs more than 1024 x 512: keep a smaller copy for drawing at 60 fps
+    const double sc = std::min({1.0, (double)kDisplayW / w, (double)kDisplayH / h});
+    d->image = sc < 1.0 ? full.rescaled(juce::jmax(1, (int)std::lround(w * sc)), juce::jmax(1, (int)std::lround(h * sc)),
+                                        juce::Graphics::highResamplingQuality)
+                        : full;
+    lumaGridSize(w, h, d->cols, d->rows, maxCols_.load());
     d->luma = lumaGridFromABGR(px.data(), w, h, w, d->cols, d->rows);
+    d->pixels = std::move(px);
     return d;
 }
 
-} // namespace
-
-void ImageStore::install(std::shared_ptr<PictureData> d, juce::MemoryBlock png)
+void ImageStore::install(std::shared_ptr<PictureData> d, juce::MemoryBlock png, bool keepPng)
 {
     const juce::ScopedLock sl(lock_);
     data_ = std::move(d);
-    png_ = std::move(png);
+    if (!keepPng) png_ = std::move(png);
     ++version_;
 }
 
@@ -42,7 +52,8 @@ void ImageStore::setPoster(int index)
 {
     index = ((index % posterCount()) + posterCount()) % posterCount();
     auto px = renderPoster(index, PictureData::kPosterW, PictureData::kPosterH);
-    auto d = makePicture(px, PictureData::kPosterW, PictureData::kPosterH);
+    builtFor_ = maxCols_.load();
+    auto d = makePicture(std::move(px), PictureData::kPosterW, PictureData::kPosterH);
     d->poster = index;
     d->name = posterName(index);
     install(std::move(d), {});
@@ -51,6 +62,7 @@ void ImageStore::setPoster(int index)
 void ImageStore::setPicture(const std::vector<uint32_t>& abgr, int w, int h, const juce::String& name)
 {
     if (w <= 0 || h <= 0 || abgr.size() != (size_t)w * (size_t)h) return;
+    builtFor_ = maxCols_.load();
     auto d = makePicture(abgr, w, h);
     d->poster = -1;
     d->name = name;
@@ -58,9 +70,21 @@ void ImageStore::setPicture(const std::vector<uint32_t>& abgr, int w, int h, con
     {
         juce::MemoryOutputStream mo(png, false);
         juce::PNGImageFormat fmt;
-        fmt.writeImageToStream(d->image, mo);
+        fmt.writeImageToStream(imageFromABGR(abgr, w, h), mo);   // full resolution in the project
     }
     install(std::move(d), std::move(png));
+}
+
+void ImageStore::setResolution(int maxCols)
+{
+    maxCols_ = maxCols;
+    builtFor_ = maxCols;
+    auto cur = get();
+    if (!cur || cur->pixels.empty()) return;
+    auto d = std::make_shared<PictureData>(*cur);   // same picture, new grid
+    lumaGridSize(d->w, d->h, d->cols, d->rows, maxCols);
+    d->luma = lumaGridFromABGR(d->pixels.data(), d->w, d->h, d->w, d->cols, d->rows);
+    install(std::move(d), {}, true);
 }
 
 bool ImageStore::setFromPng(const juce::MemoryBlock& png, const juce::String& name)

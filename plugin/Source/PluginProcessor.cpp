@@ -121,11 +121,14 @@ void MadcapProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     // from the host buffer (no AudioBuffer copies: those would allocate on the audio thread).
     std::array<int, 2> busFirst{}, busCount{};
     int numIns = 0;
-    for (int b = 0; b < std::min(2, getBusCount(true)); ++b) {
-        auto* bus = getBus(true, b);
-        if (bus == nullptr || !bus->isEnabled() || bus->getNumberOfChannels() <= 0) continue;
-        const int first = getChannelIndexInProcessBlockBuffer(true, b, 0);
-        const int count = std::min(bus->getNumberOfChannels(), buffer.getNumChannels() - first);
+    for (int b = 0; b < 2; ++b) {
+        auto* bus = b < getBusCount(true) ? getBus(true, b) : nullptr;
+        int first = -1, count = 0;
+        if (bus != nullptr && bus->isEnabled() && bus->getNumberOfChannels() > 0) {
+            first = getChannelIndexInProcessBlockBuffer(true, b, 0);
+            count = first >= 0 ? std::min(bus->getNumberOfChannels(), buffer.getNumChannels() - first) : 0;
+        }
+        inBusChannels_[(size_t)b].store(juce::jmax(0, count), std::memory_order_relaxed);   // shown in RECORD INPUT
         if (first < 0 || count <= 0) continue;
         busFirst[(size_t)numIns] = first;
         busCount[(size_t)numIns] = count;
@@ -144,6 +147,7 @@ void MadcapProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
             for (int c = c0; c < c1; ++c) pk = std::max(pk, buffer.getMagnitude(c, 0, n));
         }
         if (pk > inPeak_.load(std::memory_order_relaxed)) inPeak_.store(pk, std::memory_order_relaxed);
+        if (pk > 0.001f) signalTicks_.fetch_add(1, std::memory_order_relaxed);   // above -60 dBFS
 
         if (recActive_.load(std::memory_order_acquire)) {
             recWriting_.store(true, std::memory_order_seq_cst);
@@ -265,6 +269,15 @@ juce::String MadcapProcessor::takeStatusMessage()
 void MadcapProcessor::timerCallback()
 {
     engine_.collectGarbage();
+    // GRID RES changed (knob, automation, preset): rebuild the image grid on the loader thread
+    const int res = gridResolutionColumns(juce::roundToInt(value(P_IMG_RES)));
+    if (res != image_.gridColumnsBuiltFor() && !gridJobPending_.exchange(true)) {
+        loader_.addJob([this, res] {
+            image_.setResolution(res);
+            installImageIntoEngine(false);
+            gridJobPending_ = false;
+        });
+    }
     if (recWasActive_ && !recActive_.load())   // the 60 s buffer filled up: finish automatically
         stopRecording();
 }
@@ -422,7 +435,7 @@ void MadcapProcessor::randomize()
         switch (p) {
             case P_SRC: case P_TRIM_IN: case P_TRIM_OUT: case P_MASTER: case P_SAMPLE_ROOT: case P_KEY:
             case P_IMG_KEY: case P_MIDI_MODE: case P_LATCH: case P_VEL_AMT: case P_MOD_DEST: case P_PREVIEW_LOOP:
-            case P_GRAIN_ON: case P_ARP_ON: case P_GRAIN_HOLD: case P_IMG_HOLD: case P_OCTAVE:
+            case P_GRAIN_ON: case P_ARP_ON: case P_GRAIN_HOLD: case P_IMG_HOLD: case P_OCTAVE: case P_IMG_RES:
             case P_DEG1: case P_DEG2: case P_DEG3: case P_DEG4: case P_DEG5: case P_DEG6: case P_DEG7:
                 continue;
             default: break;
@@ -547,6 +560,7 @@ void MadcapProcessor::restoreStateXml(const juce::XmlElement& xml)
 {
     if (auto* p = xml.getChildByName(apvts_.state.getType()))
         apvts_.replaceState(juce::ValueTree::fromXml(*p));
+    image_.setMaxColumns(gridResolutionColumns(juce::roundToInt(value(P_IMG_RES))));   // before the picture loads
     presetName_ = xml.getStringAttribute("preset", presetName_);
     currentProgram_ = xml.getIntAttribute("program", currentProgram_);
     editorWidth = juce::jlimit(720, 1920, xml.getIntAttribute("editorW", editorWidth));

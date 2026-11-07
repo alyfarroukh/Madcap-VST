@@ -105,6 +105,23 @@ private:
 };
 
 //==============================================================================
+// Input light: green while the record input carries a signal (above -60 dBFS), red otherwise.
+class SignalLed : public juce::Component, public juce::SettableTooltipClient, public Tickable {
+public:
+    SignalLed(MadcapProcessor& p, const juce::String& label);
+    void paint(juce::Graphics&) override;
+    void tick() override;
+    bool hasSignal() const noexcept { return on_; }
+
+private:
+    MadcapProcessor& proc_;
+    juce::String label_;
+    unsigned last_ = 0;
+    double lastSignalMs_ = -1.0e9;
+    bool on_ = false;
+};
+
+//==============================================================================
 // Record input level bar.
 class InputMeter : public juce::Component, public juce::SettableTooltipClient, public Tickable {
 public:

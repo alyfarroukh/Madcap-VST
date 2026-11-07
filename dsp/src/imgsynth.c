@@ -71,7 +71,7 @@ static float band_level(GsImgSynth *s, int r0, int r1, int c0, int c1, int dark)
 {
     float sum = 0; int cnt = 0;
     for (int r = r0; r < r1; r++)
-        for (int c = c0; c < c1; c++) { sum += s->grid[r][c]; cnt++; }
+        for (int c = c0; c < c1; c++) { sum += s->grid[(size_t)r * s->cols + c]; cnt++; }
     if (!cnt) return 0;
     float v = sum / cnt;
     if (dark) v = 1.0f - v;
@@ -162,7 +162,7 @@ static void spectral_update(GsImgSynth *s, const float *p, int steps, int new_st
         float prof[IMG_ROWS_MAX], e[IMG_ROWS_MAX];
         for (int r = 0; r < RR; r++) {
             float sum = 0;
-            for (int c = c0; c < c1; c++) sum += s->grid[r][c];
+            for (int c = c0; c < c1; c++) sum += s->grid[(size_t)r * s->cols + c];
             prof[r] = sum / (c1 - c0);
         }
         for (int r = 0; r < RR; r++) {
@@ -222,7 +222,7 @@ static void brightness_update(GsImgSynth *s, const float *p, int steps, int new_
     float wsum = 0, ysum = 0, peak = 0;
     for (int r = 0; r < s->rows; r++) {
         float sum = 0;
-        for (int c = c0; c < c1; c++) sum += s->grid[r][c];
+        for (int c = c0; c < c1; c++) sum += s->grid[(size_t)r * s->cols + c];
         float v = sum / (c1 - c0);
         if (dark) v = 1.0f - v;
         v = (v - GATE) / (1.0f - GATE);
@@ -337,10 +337,8 @@ static void render_voice(GsImgSynth *s, GsImgVoice *v, float *L, float *R, int n
 
 void gs_img_set_grid(GsImgSynth *s, const float *grid, int cols, int rows)
 {
-    if (!grid || cols < 1 || rows < 1) return;
-    if (cols > IMG_COLS_MAX) cols = IMG_COLS_MAX;
-    if (rows > IMG_ROWS_MAX) rows = IMG_ROWS_MAX;
-    for (int r = 0; r < rows; r++) memcpy(s->grid[r], grid + (size_t)r * cols, sizeof(float) * cols);
+    if (!grid || cols < 1 || rows < 1 || cols > IMG_COLS_MAX || rows > IMG_ROWS_MAX) return;
+    s->grid = grid;
     s->cols = cols;
     s->rows = rows;
     s->has_image = 1;
@@ -369,7 +367,7 @@ int gs_img_active_notes(const GsImgSynth *s, int *out, int max)
 
 void gs_img_process(GsImgSynth *s, const float *p, float *L, float *R, int n, int sr)
 {
-    if (!s->has_image || s->cols < 1 || s->rows < 1) return;
+    if (!s->has_image || !s->grid || s->cols < 1 || s->rows < 1) return;
     s->rel_mul = powf(0.9985f, 48000.0f / (float)sr);
 
     /* notes for the current key / scale / range (rebuild if changed) */
@@ -405,8 +403,12 @@ void gs_img_process(GsImgSynth *s, const float *p, float *L, float *R, int n, in
             int step = steps > 0 ? (int)(s->phase * steps) : -2;
             int new_step = step != s->last_step;
             s->last_step = step;
-            if (mode != 1) spectral_update(s, p, steps, new_step, step_samples, sr);
-            else brightness_update(s, p, steps, new_step, step_samples, sr);
+            /* stepped: notes only change on a new step, so analyse once per step (a step of a
+             * 2048-column grid can cover hundreds of thousands of cells) */
+            if (steps <= 0 || new_step) {
+                if (mode != 1) spectral_update(s, p, steps, new_step, step_samples, sr);
+                else brightness_update(s, p, steps, new_step, step_samples, sr);
+            }
             GsImgVoice *mv = &s->mono;
             if (mode == 1 && steps == 0 && mv->freq_target > 0 && fabsf(mv->freq - mv->freq_target) > 0.01f)
                 voice_set_freq(mv, mv->freq + (mv->freq_target - mv->freq) * 0.12f, sr);   /* portamento */

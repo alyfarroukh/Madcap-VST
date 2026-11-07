@@ -28,6 +28,7 @@ private:
     HudButton undo_{"Undo"}, redo_{"Redo"}, rnd_{"Rnd", colours::amber};
     PlayButton play_;
     LevelMeter meter_;
+    SignalLed inLed_;
     juce::String message_, shownStatus_;
     double messageUntil_ = 0.0;
     int current_ = 0;

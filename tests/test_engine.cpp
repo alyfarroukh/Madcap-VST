@@ -5,6 +5,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <set>
 
 using test::makeEngine;
@@ -357,15 +358,23 @@ TEST_CASE("Host sync locks the arpeggiator to the bar", "[engine][sync]")
 TEST_CASE("Image grid follows the picture's resolution and aspect, any step count works", "[engine][image]")
 {
     int c = 0, r = 0;
-    madcap::lumaGridSize(2000, 500, c, r);   // wide panorama: aspect kept, capped
+    madcap::lumaGridSize(2000, 500, c, r, 512);   // wide panorama: aspect kept, capped
     CHECK(c == 512);
     CHECK(r == 128);
-    madcap::lumaGridSize(100, 400, c, r);    // tall picture
+    madcap::lumaGridSize(100, 400, c, r, 512);    // tall picture
     CHECK(c == 64);
     CHECK(r == 256);
-    madcap::lumaGridSize(300, 120, c, r);    // small picture: its own resolution
+    madcap::lumaGridSize(300, 120, c, r, 512);    // small picture: its own resolution
     CHECK(c == 300);
     CHECK(r == 120);
+    madcap::lumaGridSize(2048, 1024, c, r, 2048); // GRID RES 2048
+    CHECK(c == 2048);
+    CHECK(r == 1024);
+    madcap::lumaGridSize(2048, 1024, c, r, 64);   // GRID RES 64
+    CHECK(c == 64);
+    CHECK(r == 32);
+    CHECK(madcap::gridResolutionColumns(0) == 64);
+    CHECK(madcap::gridResolutionColumns(5) == 2048);
     madcap::lumaGridSize(4, 4, c, r);        // tiny: clamped to the minimum
     CHECK(c == IMG_COLS_MIN);
     CHECK(r == IMG_ROWS_MIN);
@@ -387,6 +396,32 @@ TEST_CASE("Image grid follows the picture's resolution and aspect, any step coun
             INFO("steps " << steps << " mode " << mode);
             CHECK(st.finite);
             CHECK(st.peak <= 1.0f);
+        }
+    }
+}
+
+TEST_CASE("A 2048 x 1024 grid sweeps in real time and stays in bounds", "[engine][image]")
+{
+    auto e = makeEngine(48000.0);
+    auto g = std::make_unique<madcap::ImageGrid>();
+    g->cols = IMG_COLS_MAX;
+    g->rows = IMG_ROWS_MAX;
+    g->luma.resize((size_t)g->cols * (size_t)g->rows);
+    for (size_t i = 0; i < g->luma.size(); ++i) g->luma[i] = (float)((i * 2654435761u) % 1000) / 1000.0f;
+    e->setImageNow(std::move(g));
+    e->setTarget(P_SRC, 1.0f);
+    e->setTarget(P_IMG_SWEEP, 1.0f);
+    for (int steps : {0, 4, 64}) {
+        e->setTarget(P_IMG_GRID, (float)steps);
+        for (int mode = 0; mode < 3; ++mode) {
+            e->setTarget(P_IMG_MODE, (float)mode);
+            const auto t0 = std::chrono::steady_clock::now();
+            auto st = render(*e, 1.0, 256);
+            const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            INFO("steps " << steps << " mode " << mode << " took " << secs << " s for 1 s of audio");
+            CHECK(st.finite);
+            CHECK(st.peak <= 1.0f);
+            CHECK(secs < 0.5);   // comfortably faster than real time
         }
     }
 }

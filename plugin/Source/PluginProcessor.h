@@ -68,6 +68,9 @@ public:
     float takeInputPeak() noexcept { return inPeak_.exchange(0.0f); }   // editor meter
     int recordChannel() const noexcept { return recChannel_.load(); }   // 0 = all, 1 = in 1, 2 = in 2
     void setRecordChannel(int c) noexcept { recChannel_.store(juce::jlimit(0, 2, c)); }
+    // What the host actually connected to Madcap's inputs (updated by the audio thread).
+    int inputBusChannels(int bus) const noexcept { return inBusChannels_[(size_t)(bus & 1)].load(); }
+    unsigned inputSignalTicks() const noexcept { return signalTicks_.load(); }
     bool hasRecordInput() const noexcept { return getTotalNumInputChannels() > 0; }
 
     void tapTempo();
@@ -123,6 +126,9 @@ private:
     std::atomic<float> recPeak_{0.0f};
     std::atomic<float> inPeak_{0.0f};
     std::atomic<int> recChannel_{0};
+    std::array<std::atomic<int>, 2> inBusChannels_{};   // channels the host connected: 0 = main input, 1 = sidechain
+    std::atomic<unsigned> signalTicks_{0};
+    std::atomic<bool> gridJobPending_{false};              // counts blocks with input above -60 dBFS
     double recRate_ = 48000.0;
     bool recWasActive_ = false;          // message thread
 
