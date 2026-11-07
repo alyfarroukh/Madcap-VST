@@ -31,7 +31,10 @@ struct SourceBuffer {
 };
 
 struct ImageGrid {
-    std::vector<float> luma;      // IMG_ROWS x IMG_COLS, row 0 = top
+    std::vector<float> luma;      // cols x rows, row 0 = top, row-major
+    int cols = 0, rows = 0;
+    bool valid() const { return cols >= 1 && rows >= 1 && cols <= IMG_COLS_MAX && rows <= IMG_ROWS_MAX
+                                && luma.size() == (size_t)cols * (size_t)rows; }
 };
 
 struct HostInfo {

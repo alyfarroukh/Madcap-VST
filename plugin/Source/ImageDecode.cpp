@@ -77,7 +77,15 @@ void accumulateToOut(const std::vector<float>& acc, int dw, int dh, std::vector<
         }
 }
 
-std::string loadPico(const uint8_t* data, size_t size, int dw, int dh, std::vector<uint32_t>& out)
+// Fit the whole picture inside maxW x maxH, keeping its aspect ratio; never upscale.
+void fitSize(int W, int H, int maxW, int maxH, float& sc, int& dw, int& dh)
+{
+    sc = std::min({1.0f, (float)maxW / (float)W, (float)maxH / (float)H});
+    dw = std::max(1, (int)std::lround((float)W * sc));
+    dh = std::max(1, (int)std::lround((float)H * sc));
+}
+
+std::string loadPico(const uint8_t* data, size_t size, int maxW, int maxH, std::vector<uint32_t>& out, int& dw, int& dh)
 {
     std::lock_guard<std::mutex> lock(picoMutex);
     MemReader rd{data, size, 0};
@@ -86,7 +94,8 @@ std::string loadPico(const uint8_t* data, size_t size, int dw, int dh, std::vect
     if (st) return st == PJPG_UNSUPPORTED_MODE ? "progressive JPEG" : "JPEG error";
     const int W = info.m_width, H = info.m_height;
     if (W <= 0 || H <= 0) return "empty JPEG";
-    const float sc = std::max((float)dw / (float)W, (float)dh / (float)H);
+    float sc = 1.0f;
+    fitSize(W, H, maxW, maxH, sc, dw, dh);
     const bool reduce = sc * 8.0f <= 1.3f;               // 1/8 resolution is (nearly) all we need
     if (reduce) {
         rd.pos = 0;
@@ -95,7 +104,7 @@ std::string loadPico(const uint8_t* data, size_t size, int dw, int dh, std::vect
     }
     std::vector<float> acc((size_t)dw * (size_t)dh * 4, 0.0f);
     const int unit = reduce ? 8 : 1;
-    const float ox = ((float)W * sc - (float)dw) / 2.0f, oy = ((float)H * sc - (float)dh) / 2.0f;
+    const float ox = 0.0f, oy = 0.0f;
     const int bw = info.m_MCUWidth / 8, bh = info.m_MCUHeight / 8;
     for (int my = 0; my < info.m_MCUSPerCol; ++my)
         for (int mx = 0; mx < info.m_MCUSPerRow; ++mx) {
@@ -133,7 +142,7 @@ done:
     return {};
 }
 
-std::string loadStb(const uint8_t* data, size_t size, int dw, int dh, std::vector<uint32_t>& out)
+std::string loadStb(const uint8_t* data, size_t size, int maxW, int maxH, std::vector<uint32_t>& out, int& dw, int& dh)
 {
     int w = 0, h = 0, comp = 0;
     if (size > (size_t)0x7fffffff) return "file too big";
@@ -142,8 +151,9 @@ std::string loadStb(const uint8_t* data, size_t size, int dw, int dh, std::vecto
     if ((uint64_t)w * (uint64_t)h > kMaxStbPixels) return "picture too big";
     unsigned char* px = stbi_load_from_memory(data, (int)size, &w, &h, &comp, 4);
     if (!px) return stbi_failure_reason() ? stbi_failure_reason() : "decode failed";
-    const float sc = std::max((float)dw / (float)w, (float)dh / (float)h);   // cover: fill, crop the overflow
-    const float ox = ((float)w * sc - (float)dw) / 2.0f, oy = ((float)h * sc - (float)dh) / 2.0f;
+    float sc = 1.0f;
+    fitSize(w, h, maxW, maxH, sc, dw, dh);           // the whole picture, no crop
+    const float ox = 0.0f, oy = 0.0f;
     std::vector<float> acc((size_t)dw * (size_t)dh * 4, 0.0f);
     for (int y = 0; y < dh; ++y) {
         int y0 = (int)(((float)y + oy) / sc), y1 = (int)(((float)y + 1.0f + oy) / sc);
@@ -172,15 +182,17 @@ std::string loadStb(const uint8_t* data, size_t size, int dw, int dh, std::vecto
 
 } // namespace
 
-std::string decodeImageCover(const uint8_t* data, size_t size, int dw, int dh, std::vector<uint32_t>& out)
+std::string decodeImageFit(const uint8_t* data, size_t size, int maxW, int maxH, std::vector<uint32_t>& out,
+                           int& outW, int& outH)
 {
-    if (!data || size < 8 || dw <= 0 || dh <= 0) return "empty file";
+    outW = outH = 0;
+    if (!data || size < 8 || maxW <= 0 || maxH <= 0) return "empty file";
     std::string picoErr;
     if (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) {
-        picoErr = loadPico(data, size, dw, dh, out);
+        picoErr = loadPico(data, size, maxW, maxH, out, outW, outH);
         if (picoErr.empty()) return {};
     }
-    std::string err = loadStb(data, size, dw, dh, out);
+    std::string err = loadStb(data, size, maxW, maxH, out, outW, outH);
     if (err.empty()) return {};
     return picoErr.empty() ? err : picoErr + " / " + err;
 }

@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "StandaloneIO.h"
 #include "Presets.h"
 #include "madcap/Resample.h"
 
@@ -90,6 +91,8 @@ void MadcapProcessor::installImageIntoEngine(bool now)
     if (!d) return;
     auto g = std::make_unique<ImageGrid>();
     g->luma = d->luma;
+    g->cols = d->cols;
+    g->rows = d->rows;
     if (now) engine_.setImageNow(std::move(g));
     else engine_.postImage(std::move(g));
 }
@@ -109,30 +112,38 @@ void MadcapProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     juce::ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
 
-    // 1) capture the input for REC before the buffer is overwritten
-    if (recActive_.load(std::memory_order_acquire)) {
-        recWriting_.store(true, std::memory_order_seq_cst);
-        if (recActive_.load(std::memory_order_seq_cst) && getBusCount(true) > 0) {
-            auto in = getBusBuffer(buffer, true, 0);
-            const int ch = in.getNumChannels();
-            const int len = recLen_.load(std::memory_order_relaxed);
-            const int k = std::min(n, (int)recBuf_.size() - len);
-            if (ch > 0 && k > 0) {
-                float pk = recPeak_.load(std::memory_order_relaxed);
-                const float g = 1.0f / (float)ch;
-                for (int i = 0; i < k; ++i) {
-                    float s = 0.0f;
-                    for (int c = 0; c < ch; ++c) s += in.getReadPointer(c)[i];
-                    s *= g;
-                    recBuf_[(size_t)(len + i)] = s;
-                    pk = std::max(pk, std::abs(s));
+    // 1) the record input (sidechain / audio interface): meter it always, record it when armed,
+    //    before the buffer is overwritten by the output
+    if (getBusCount(true) > 0) {
+        auto in = getBusBuffer(buffer, true, 0);
+        const int ch = in.getNumChannels();
+        if (ch > 0 && n > 0) {
+            const int sel = recChannel_.load(std::memory_order_relaxed);    // 0 = all, 1 = in 1, 2 = in 2
+            const int c0 = sel == 2 ? std::min(1, ch - 1) : 0;
+            const int c1 = sel == 0 ? ch : c0 + 1;
+            float pk = 0.0f;
+            for (int c = c0; c < c1; ++c) pk = std::max(pk, in.getMagnitude(c, 0, n));
+            if (pk > inPeak_.load(std::memory_order_relaxed)) inPeak_.store(pk, std::memory_order_relaxed);
+
+            if (recActive_.load(std::memory_order_acquire)) {
+                recWriting_.store(true, std::memory_order_seq_cst);
+                if (recActive_.load(std::memory_order_seq_cst)) {
+                    const int len = recLen_.load(std::memory_order_relaxed);
+                    const int k = std::min(n, (int)recBuf_.size() - len);
+                    if (k > 0) {
+                        for (int i = 0; i < k; ++i) {
+                            float s = 0.0f;
+                            for (int c = c0; c < c1; ++c) s += in.getReadPointer(c)[i];
+                            recBuf_[(size_t)(len + i)] = s;   // normalised when the take ends
+                        }
+                        recPeak_.store(std::max(recPeak_.load(std::memory_order_relaxed), pk), std::memory_order_relaxed);
+                        recLen_.store(len + k, std::memory_order_release);
+                    }
+                    if (len + k >= (int)recBuf_.size()) recActive_.store(false);
                 }
-                recPeak_.store(pk, std::memory_order_relaxed);
-                recLen_.store(len + k, std::memory_order_release);
+                recWriting_.store(false, std::memory_order_seq_cst);
             }
-            if (len + k >= (int)recBuf_.size()) recActive_.store(false);
         }
-        recWriting_.store(false, std::memory_order_seq_cst);
     }
 
     for (int c = 0; c < buffer.getNumChannels(); ++c) buffer.clear(c, 0, n);
@@ -262,9 +273,10 @@ void MadcapProcessor::loadImageAsync(const juce::File& f)
     setStatus("Loading " + f.getFileName() + " ...");
     loader_.addJob([this, f] {
         std::vector<uint32_t> px;
-        auto err = ImageStore::decodeFile(f, px);
+        int w = 0, h = 0;
+        auto err = ImageStore::decodeFile(f, px, w, h);
         if (err.isNotEmpty()) { setStatus("Image: " + err); return; }
-        image_.setPicture(px, f.getFileNameWithoutExtension());
+        image_.setPicture(px, w, h, f.getFileNameWithoutExtension());
         installImageIntoEngine(false);
         setStatus("Loaded " + f.getFileName());
         juce::MessageManager::callAsync([safe = juce::WeakReference<MadcapProcessor>(this)] {
@@ -315,6 +327,7 @@ void MadcapProcessor::cropToCut()
 //==============================================================================
 bool MadcapProcessor::startRecording()
 {
+    if (isStandalone()) standalone::unmuteInput();
     const double sr = currentRate_.load();
     if (sr <= 0) { setStatus("Audio is not running"); return false; }
     if (!hasRecordInput()) {
@@ -485,6 +498,7 @@ std::unique_ptr<juce::XmlElement> MadcapProcessor::createStateXml(bool includeMe
     juce::String lockBits;
     for (bool b : locks_) lockBits << (b ? "1" : "0");
     root->setAttribute("locks", lockBits);
+    root->setAttribute("recChannel", recChannel_.load());
 
     if (auto x = apvts_.copyState().createXml()) root->addChildElement(x.release());
 
@@ -514,6 +528,7 @@ void MadcapProcessor::restoreStateXml(const juce::XmlElement& xml)
     currentProgram_ = xml.getIntAttribute("program", currentProgram_);
     editorWidth = juce::jlimit(720, 1920, xml.getIntAttribute("editorW", editorWidth));
     editorHeight = juce::jlimit(408, 1088, xml.getIntAttribute("editorH", editorHeight));
+    recChannel_ = juce::jlimit(0, 2, xml.getIntAttribute("recChannel", recChannel_.load()));
     const auto lockBits = xml.getStringAttribute("locks");
     for (int i = 0; i < PAGE_COUNT && i < lockBits.length(); ++i) locks_[(size_t)i] = lockBits[i] == '1';
 

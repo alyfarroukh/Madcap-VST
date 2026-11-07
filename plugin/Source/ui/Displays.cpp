@@ -260,21 +260,39 @@ void ImageCard::tick()
     }
 }
 
+juce::Rectangle<float> ImageCard::imageRect() const
+{
+    auto a = getLocalBounds().toFloat().reduced(3.0f);
+    if (!pic_ || !pic_->image.isValid()) return a;
+    // the whole picture, at its own aspect ratio (letterboxed, never cropped)
+    const float iw = (float)pic_->image.getWidth(), ih = (float)pic_->image.getHeight();
+    const float sc = juce::jmin(a.getWidth() / iw, a.getHeight() / ih);
+    return juce::Rectangle<float>(iw * sc, ih * sc).withCentre(a.getCentre());
+}
+
 void ImageCard::paint(juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
     drawPanel(g, b, {}, colours::blue);
-    auto a = b.reduced(2.0f);
+    auto a = imageRect();
     if (pic_ && pic_->image.isValid()) {
         g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
         g.drawImage(pic_->image, a, juce::RectanglePlacement::stretchToFit);
     }
     const bool live = proc_.value(P_SRC) > 0.5f;
-    if (!live) {
-        g.setColour(colours::bg.withAlpha(0.55f));
-        g.fillRect(a);
-        drawLabel(g, "Input is SAMPLE - switch INPUT to IMAGE to hear the sweeper", a, juce::Justification::centred, 13.0f, colours::text);
+
+    // the step grid: one column per step
+    const int steps = juce::roundToInt(proc_.value(P_IMG_GRID));
+    if (steps > 0) {
+        const float sw = a.getWidth() / (float)steps;
+        g.setColour(colours::bg.withAlpha(steps > 64 ? 0.18f : 0.32f));
+        for (int i = 1; i < steps; ++i) g.drawVerticalLine((int)(a.getX() + sw * (float)i), a.getY(), a.getBottom());
+        // highlight the current step
+        const int cur = juce::jlimit(0, steps - 1, (int)(phase_ * (float)steps));
+        g.setColour(colours::teal.withAlpha(0.16f));
+        g.fillRect(juce::Rectangle<float>(a.getX() + sw * (float)cur, a.getY(), sw, a.getHeight()));
     }
+
     // scan line with glow
     const float x = a.getX() + phase_ * a.getWidth();
     juce::ColourGradient glow(colours::teal.withAlpha(0.0f), x - 10.0f, 0, colours::teal.withAlpha(0.0f), x + 10.0f, 0, false);
@@ -304,8 +322,13 @@ void ImageCard::paint(juce::Graphics& g)
             }
         }
     }
+    if (pic_)
+        drawLabel(g, juce::String(pic_->image.getWidth()) + " x " + juce::String(pic_->image.getHeight()) + "  -  grid "
+                     + juce::String(pic_->cols) + " x " + juce::String(pic_->rows),
+                  b.reduced(8.0f, 4.0f).removeFromBottom(14.0f), juce::Justification::centredRight, 10.0f,
+                  colours::textDim);
     if (proc_.value(P_IMG_HOLD) > 0.5f)
-        drawLabel(g, "HOLD - live buffer frozen", a.removeFromTop(18.0f).reduced(6.0f, 0.0f), juce::Justification::centredRight,
+        drawLabel(g, "HOLD - live buffer frozen", b.reduced(8.0f, 4.0f).removeFromTop(16.0f), juce::Justification::centredRight,
                   12.0f, colours::orange, Weight::Bold);
 }
 
@@ -317,7 +340,8 @@ void ImageCard::mouseDown(const juce::MouseEvent& e)
 
 void ImageCard::mouseDrag(const juce::MouseEvent& e)
 {
-    const float n = juce::jlimit(0.0f, 0.9999f, e.position.x / (float)juce::jmax(1, getWidth()));
+    auto a = imageRect();
+    const float n = juce::jlimit(0.0f, 0.9999f, (e.position.x - a.getX()) / juce::jmax(1.0f, a.getWidth()));
     proc_.engine().setScrub(n);
     phase_ = n;
     repaint();
@@ -327,6 +351,177 @@ void ImageCard::mouseUp(const juce::MouseEvent&)
 {
     scrubbing_ = false;
     proc_.engine().setScrub(-1.0f);
+}
+
+//==============================================================================
+// 3D terrain: the picture as a height field (brightness = height, or darkness when
+// LISTEN TO = DARK), seen from a fixed sweeper at the front edge. Depth = the columns
+// still to come, so the landscape rolls towards you as the sweep moves.
+TerrainView::TerrainView(MadcapProcessor& p) : proc_(p)
+{
+    setTooltip("Terrain: the picture as a landscape rolling through the scan line (front edge, orange)");
+}
+
+void TerrainView::tick()
+{
+    const int v = proc_.image().version();
+    if (v != version_) { version_ = v; pic_ = proc_.image().get(); }
+    phase_ = proc_.engine().ui().imgPhase.load();
+    repaint();
+}
+
+float TerrainView::heightAt(float col, float row) const
+{
+    const int C = pic_->cols, R = pic_->rows;
+    col -= std::floor(col / (float)C) * (float)C;          // the sweep loops: wrap the columns
+    row = juce::jlimit(0.0f, (float)(R - 1), row);
+    const int c0 = juce::jlimit(0, C - 1, (int)col), c1 = (c0 + 1) % C;
+    const int r0 = (int)row, r1 = juce::jmin(R - 1, r0 + 1);
+    const float fc = col - (float)c0, fr = row - (float)r0;
+    auto L = [&](int r, int c) { return pic_->luma[(size_t)r * (size_t)C + (size_t)c]; };
+    const float top = L(r0, c0) + (L(r0, c1) - L(r0, c0)) * fc;
+    const float bot = L(r1, c0) + (L(r1, c1) - L(r1, c0)) * fc;
+    float v = top + (bot - top) * fr;
+    if (dark_) v = 1.0f - v;
+    return juce::jlimit(0.0f, 1.0f, (v - 0.06f) / 0.94f);
+}
+
+void TerrainView::paint(juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    drawPanel(g, b, "Terrain", colours::blue);
+    auto a = b.reduced(3.0f).withTrimmedTop(16.0f);
+    juce::Graphics::ScopedSaveState clip(g);
+    g.reduceClipRegion(a.toNearestInt());
+    juce::ColourGradient sky(colours::bg, a.getX(), a.getY(), juce::Colour(0xFF0B1A1C), a.getX(), a.getBottom(), false);
+    g.setGradientFill(sky);
+    g.fillRect(a);
+    if (!pic_ || pic_->cols < 2 || pic_->rows < 2 || pic_->luma.empty()) return;
+    dark_ = juce::roundToInt(proc_.value(P_IMG_READ)) == 1;
+
+    constexpr int NX = 52, NZ = 40;                 // lateral samples (picture rows) x depth rows (columns ahead)
+    const float window = 0.5f;                       // how much of the picture is visible ahead of the sweeper
+    // camera fitted to the panel: the front row (scan line) spans ~96 % of the width with its
+    // ground near the bottom; the far rows climb to a horizon near the top
+    const float width = 3.0f, depth = 6.0f;
+    const float f = a.getWidth() * 0.55f;
+    const float z0 = f * (width * 0.5f) / (a.getWidth() * 0.48f);
+    const float horizon = a.getY() + a.getHeight() * 0.16f;
+    const float camH = (a.getHeight() * 0.76f) * z0 / f;      // front ground at 92 % of the height
+    const float peak = camH * 0.55f;
+    const float cx = a.getCentreX();
+    const float C = (float)pic_->cols, R = (float)pic_->rows;
+
+    // project the height field (row k = 0 is the scan line at the front)
+    std::array<std::array<juce::Point<float>, NX>, NZ> pt;
+    std::array<std::array<float, NX>, NZ> hv;
+    for (int k = 0; k < NZ; ++k) {
+        const float t = (float)k / (float)(NZ - 1);
+        const float col = (phase_ + t * window) * C;
+        const float z = z0 + t * depth;
+        for (int j = 0; j < NX; ++j) {
+            const float u = (float)j / (float)(NX - 1);              // left = low notes (bottom of the picture)
+            const float h = heightAt(col, (1.0f - u) * (R - 1.0f));
+            const float x = (u - 0.5f) * width;
+            hv[(size_t)k][(size_t)j] = h;
+            pt[(size_t)k][(size_t)j] = { cx + x * f / z, horizon + (camH - h * peak) * f / z };
+        }
+    }
+
+    // far to near: each strip hides what is behind it, then draws its wireframe
+    for (int k = NZ - 1; k >= 1; --k) {
+        juce::Path strip;
+        strip.startNewSubPath(pt[(size_t)k][0]);
+        for (int j = 1; j < NX; ++j) strip.lineTo(pt[(size_t)k][(size_t)j]);
+        for (int j = NX - 1; j >= 0; --j) strip.lineTo(pt[(size_t)(k - 1)][(size_t)j]);
+        strip.closeSubPath();
+        g.setColour(colours::bg);
+        g.fillPath(strip);
+
+        juce::Path wire;
+        wire.startNewSubPath(pt[(size_t)k][0]);
+        for (int j = 1; j < NX; ++j) wire.lineTo(pt[(size_t)k][(size_t)j]);
+        for (int j = 0; j < NX; ++j) {
+            wire.startNewSubPath(pt[(size_t)k][(size_t)j]);
+            wire.lineTo(pt[(size_t)(k - 1)][(size_t)j]);                 // towards the viewer
+            if (j + 1 < NX) {
+                wire.startNewSubPath(pt[(size_t)k][(size_t)j]);
+                wire.lineTo(pt[(size_t)(k - 1)][(size_t)j + 1]);         // diagonal: triangle mesh
+            }
+        }
+        const float near = 1.0f - (float)k / (float)NZ;
+        g.setColour(colours::teal.interpolatedWith(colours::text, 0.35f).withAlpha(0.12f + 0.6f * near));
+        g.strokePath(wire, juce::PathStrokeType(0.7f + 0.5f * near));
+    }
+
+    // hide everything below the front edge, then draw the scan line (front row) in orange
+    {
+        juce::Path below;
+        below.startNewSubPath(pt[0][0]);
+        for (int j = 1; j < NX; ++j) below.lineTo(pt[0][(size_t)j]);
+        below.lineTo(a.getRight(), a.getBottom());
+        below.lineTo(a.getX(), a.getBottom());
+        below.closeSubPath();
+        g.setColour(colours::bg);
+        g.fillPath(below);
+        juce::Path front;
+        front.startNewSubPath(pt[0][0]);
+        for (int j = 1; j < NX; ++j) front.lineTo(pt[0][(size_t)j]);
+        g.setColour(colours::orange);
+        g.strokePath(front, juce::PathStrokeType(2.0f));
+    }
+
+    // sounding notes ride on the front edge
+    const auto& ui = proc_.engine().ui();
+    if (proc_.value(P_SRC) > 0.5f) {
+        const int n = juce::jlimit(0, IMG_MAX_NOTES, ui.imgNumNotes.load());
+        const bool bright = juce::roundToInt(proc_.value(P_IMG_MODE)) == 1;
+        auto dotAt = [&](float u, float amp) {
+            const float jf = u * (float)(NX - 1);
+            const int j0 = juce::jlimit(0, NX - 2, (int)jf);
+            const float fr = jf - (float)j0;
+            auto p = pt[0][(size_t)j0] + (pt[0][(size_t)j0 + 1] - pt[0][(size_t)j0]) * fr;
+            g.setColour(colours::amber.withAlpha(juce::jlimit(0.3f, 1.0f, amp * 1.6f)));
+            g.fillEllipse(juce::Rectangle<float>(8.0f, 8.0f).withCentre(p));
+        };
+        if (bright) {
+            const float my = ui.imgMonoY.load();
+            if (my >= 0.0f) dotAt(my, 1.0f);
+        } else {
+            for (int i = 0; i < n; ++i) {
+                const float amp = ui.imgAmp[(size_t)i].load();
+                if (amp >= 0.02f) dotAt(((float)i + 0.5f) / (float)n, amp);
+            }
+        }
+    }
+    drawLabel(g, "Low", { a.getX() + 6.0f, a.getBottom() - 16.0f, 40.0f, 14.0f }, juce::Justification::centredLeft, 10.0f, colours::textDim);
+    drawLabel(g, "High", { a.getRight() - 46.0f, a.getBottom() - 16.0f, 40.0f, 14.0f }, juce::Justification::centredRight, 10.0f, colours::textDim);
+}
+
+//==============================================================================
+InputMeter::InputMeter(MadcapProcessor& p) : proc_(p)
+{
+    setTooltip("Record input level");
+}
+
+void InputMeter::tick()
+{
+    const float pk = proc_.takeInputPeak();
+    level_ = juce::jmax(pk, level_ * 0.88f);
+    repaint();
+}
+
+void InputMeter::paint(juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    g.setColour(colours::blueDim);
+    g.fillRect(b);
+    const float db = juce::Decibels::gainToDecibels(level_, -60.0f);
+    const float w = juce::jlimit(0.0f, 1.0f, (db + 60.0f) / 60.0f);
+    g.setColour(level_ > 0.98f ? colours::red : (db > -12.0f ? colours::amber : colours::green));
+    g.fillRect(b.withWidth(b.getWidth() * w));
+    g.setColour(colours::blue.withAlpha(0.6f));
+    g.drawRect(b, 1.0f);
 }
 
 //==============================================================================
@@ -345,16 +540,19 @@ void AnalysisGrid::rebuild()
     listen_ = juce::roundToInt(proc_.value(P_IMG_READ));
     const int N = juce::jmax(1, nNotes_), C = 64;
     cache_ = juce::Image(juce::Image::ARGB, C, N, true, juce::SoftwareImageType());
-    if (!pic || pic->luma.size() != (size_t)IMG_ROWS * IMG_COLS) return;
+    if (!pic || pic->cols < 1 || pic->rows < 1 || pic->luma.size() != (size_t)pic->cols * (size_t)pic->rows) return;
+    const int GC = pic->cols, GR = pic->rows;
     juce::Image::BitmapData bd(cache_, juce::Image::BitmapData::writeOnly);
     for (int band = 0; band < N; ++band) {
-        int r1 = IMG_ROWS - band * IMG_ROWS / N, r0 = IMG_ROWS - (band + 1) * IMG_ROWS / N;
+        int r1 = GR - band * GR / N, r0 = GR - (band + 1) * GR / N;
         if (r1 <= r0) r1 = r0 + 1;
+        if (r1 > GR) r1 = GR;
         for (int c = 0; c < C; ++c) {
             float sum = 0.0f;
             int cnt = 0;
+            const int k0 = c * GC / C, k1 = juce::jmax(k0 + 1, (c + 1) * GC / C);
             for (int r = r0; r < r1; ++r)
-                for (int k = c * IMG_COLS / C; k < (c + 1) * IMG_COLS / C; ++k) { sum += pic->luma[(size_t)r * IMG_COLS + (size_t)k]; ++cnt; }
+                for (int k = k0; k < k1 && k < GC; ++k) { sum += pic->luma[(size_t)r * (size_t)GC + (size_t)k]; ++cnt; }
             float v = cnt ? sum / (float)cnt : 0.0f;
             if (listen_ == 1) v = 1.0f - v;
             v = juce::jlimit(0.0f, 1.0f, (v - 0.06f) / 0.94f);
@@ -386,6 +584,11 @@ void AnalysisGrid::paint(juce::Graphics& g)
     if (N <= 40) {
         g.setColour(colours::bg.withAlpha(0.6f));
         for (int i = 1; i < N; ++i) g.drawHorizontalLine((int)(a.getY() + a.getHeight() * (float)i / (float)N), a.getX(), a.getRight());
+    }
+    const int steps = juce::roundToInt(proc_.value(P_IMG_GRID));
+    if (steps > 0 && steps <= 64) {
+        g.setColour(colours::amber.withAlpha(0.35f));
+        for (int i = 1; i < steps; ++i) g.drawVerticalLine((int)(a.getX() + a.getWidth() * (float)i / (float)steps), a.getY(), a.getBottom());
     }
     const float x = a.getX() + phase_ * a.getWidth();
     g.setColour(colours::orange);
@@ -725,58 +928,6 @@ void ChordPads::mouseUp(const juce::MouseEvent&)
     pressed_ = -1;
     repaint();
 }
-
-//==============================================================================
-RearTouchPad::RearTouchPad(MadcapProcessor& p) : proc_(p), xy_(p, P_CHORD, P_VOICING)
-{
-    setTooltip("Rear touch: X picks the chord type, Y sets the voicing (close at the bottom, open at the top)");
-    setMouseCursor(juce::MouseCursor::CrosshairCursor);
-}
-
-void RearTouchPad::tick()
-{
-    const float c = proc_.value(P_CHORD), v = proc_.value(P_VOICING);
-    if (!juce::exactlyEqual(c, chord_) || !juce::exactlyEqual(v, voicing_) || touching_) { chord_ = c; voicing_ = v; repaint(); }
-}
-
-void RearTouchPad::paint(juce::Graphics& g)
-{
-    static const char* const abbr[] = {"UNI", "OCT", "3RD", "4TH", "5TH", "TRI", "SU2", "SU4", "7TH", "9TH"};
-    auto b = getLocalBounds().toFloat();
-    drawPanel(g, b, "Rear touch", colours::blue);
-    auto a = b.reduced(6.0f).withTrimmedTop(14.0f);
-    const float zw = a.getWidth() / 10.0f;
-    const int sel = juce::roundToInt(chord_);
-    for (int i = 0; i < 10; ++i) {
-        auto z = juce::Rectangle<float>(a.getX() + zw * (float)i, a.getY(), zw, a.getHeight());
-        if (i == sel) { g.setColour(colours::teal.withAlpha(0.22f)); g.fillRect(z); }
-        g.setColour(colours::blue.withAlpha(0.25f));
-        if (i > 0) g.drawVerticalLine((int)z.getX(), z.getY(), z.getBottom());
-        g.setColour(i == sel ? colours::teal : colours::textDim);
-        g.setFont(font(9.5f, Weight::Bold));
-        g.drawText(abbr[i], z.removeFromBottom(12.0f), juce::Justification::centred);
-    }
-    const float y = a.getBottom() - voicing_ * a.getHeight();
-    g.setColour(colours::orange.withAlpha(0.6f));
-    g.drawHorizontalLine((int)y, a.getX(), a.getRight());
-    const float x = a.getX() + ((float)sel + 0.5f) * zw;
-    g.setColour(colours::orange);
-    g.drawEllipse(juce::Rectangle<float>(touching_ ? 22.0f : 12.0f, touching_ ? 22.0f : 12.0f).withCentre({touching_ ? touch_.x : x, y}), 1.5f);
-    drawLabel(g, "Open", a.withHeight(12.0f), juce::Justification::centredRight, 9.5f, colours::textDim);
-}
-
-void RearTouchPad::setFrom(juce::Point<float> p)
-{
-    auto a = getLocalBounds().toFloat().reduced(6.0f).withTrimmedTop(14.0f);
-    touch_ = p;
-    const float x01 = juce::jlimit(0.0f, 0.9999f, (p.x - a.getX()) / a.getWidth());
-    const float y01 = juce::jlimit(0.0f, 1.0f, (a.getBottom() - p.y) / a.getHeight());
-    xy_.set(std::floor(x01 * 10.0f), y01);
-}
-
-void RearTouchPad::mouseDown(const juce::MouseEvent& e) { touching_ = true; xy_.begin(); setFrom(e.position); }
-void RearTouchPad::mouseDrag(const juce::MouseEvent& e) { setFrom(e.position); }
-void RearTouchPad::mouseUp(const juce::MouseEvent&) { touching_ = false; xy_.end(); repaint(); }
 
 //==============================================================================
 LevelMeter::LevelMeter(MadcapProcessor& p) : proc_(p) {}

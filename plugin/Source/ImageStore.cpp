@@ -19,6 +19,15 @@ juce::Image imageFromABGR(const std::vector<uint32_t>& px, int w, int h)
     return img;
 }
 
+std::shared_ptr<PictureData> makePicture(const std::vector<uint32_t>& px, int w, int h)
+{
+    auto d = std::make_shared<PictureData>();
+    d->image = imageFromABGR(px, w, h);
+    lumaGridSize(w, h, d->cols, d->rows);
+    d->luma = lumaGridFromABGR(px.data(), w, h, w, d->cols, d->rows);
+    return d;
+}
+
 } // namespace
 
 void ImageStore::install(std::shared_ptr<PictureData> d, juce::MemoryBlock png)
@@ -32,21 +41,17 @@ void ImageStore::install(std::shared_ptr<PictureData> d, juce::MemoryBlock png)
 void ImageStore::setPoster(int index)
 {
     index = ((index % posterCount()) + posterCount()) % posterCount();
-    auto px = renderPoster(index, PictureData::kW, PictureData::kH);
-    auto d = std::make_shared<PictureData>();
-    d->image = imageFromABGR(px, PictureData::kW, PictureData::kH);
-    d->luma = lumaGridFromABGR(px.data(), PictureData::kW, PictureData::kH, PictureData::kW);
+    auto px = renderPoster(index, PictureData::kPosterW, PictureData::kPosterH);
+    auto d = makePicture(px, PictureData::kPosterW, PictureData::kPosterH);
     d->poster = index;
     d->name = posterName(index);
     install(std::move(d), {});
 }
 
-void ImageStore::setPicture(const std::vector<uint32_t>& abgr, const juce::String& name)
+void ImageStore::setPicture(const std::vector<uint32_t>& abgr, int w, int h, const juce::String& name)
 {
-    if (abgr.size() != (size_t)PictureData::kW * PictureData::kH) return;
-    auto d = std::make_shared<PictureData>();
-    d->image = imageFromABGR(abgr, PictureData::kW, PictureData::kH);
-    d->luma = lumaGridFromABGR(abgr.data(), PictureData::kW, PictureData::kH, PictureData::kW);
+    if (w <= 0 || h <= 0 || abgr.size() != (size_t)w * (size_t)h) return;
+    auto d = makePicture(abgr, w, h);
     d->poster = -1;
     d->name = name;
     juce::MemoryBlock png;
@@ -61,10 +66,11 @@ void ImageStore::setPicture(const std::vector<uint32_t>& abgr, const juce::Strin
 bool ImageStore::setFromPng(const juce::MemoryBlock& png, const juce::String& name)
 {
     std::vector<uint32_t> px;
-    if (!decodeImageCover(static_cast<const uint8_t*>(png.getData()), png.getSize(), PictureData::kW,
-                          PictureData::kH, px).empty())
+    int w = 0, h = 0;
+    if (!decodeImageFit(static_cast<const uint8_t*>(png.getData()), png.getSize(), PictureData::kMaxW,
+                        PictureData::kMaxH, px, w, h).empty())
         return false;
-    setPicture(px, name);
+    setPicture(px, w, h, name);
     return true;
 }
 
@@ -85,12 +91,12 @@ juce::StringArray ImageStore::supportedExtensions()
     return {".png", ".jpg", ".jpeg", ".bmp", ".gif"};
 }
 
-juce::String ImageStore::decodeFile(const juce::File& f, std::vector<uint32_t>& abgr)
+juce::String ImageStore::decodeFile(const juce::File& f, std::vector<uint32_t>& abgr, int& w, int& h)
 {
     juce::MemoryBlock data;
     if (!f.loadFileAsData(data)) return "Cannot open " + f.getFileName();
-    auto err = decodeImageCover(static_cast<const uint8_t*>(data.getData()), data.getSize(), PictureData::kW,
-                                PictureData::kH, abgr);
+    auto err = decodeImageFit(static_cast<const uint8_t*>(data.getData()), data.getSize(), PictureData::kMaxW,
+                              PictureData::kMaxH, abgr, w, h);
     if (!err.empty()) return juce::String(err);
     return {};
 }

@@ -4,8 +4,11 @@
 #ifndef GS_IMGSYNTH_H
 #define GS_IMGSYNTH_H
 
-#define IMG_COLS 256
-#define IMG_ROWS 128
+/* The analysis grid follows the picture's aspect / resolution, up to these sizes. */
+#define IMG_COLS_MAX 512
+#define IMG_ROWS_MAX 256
+#define IMG_COLS_MIN 16
+#define IMG_ROWS_MIN 16
 #define IMG_MAX_NOTES 128
 
 #ifdef __cplusplus
@@ -25,7 +28,8 @@ typedef struct {
 } GsImgVoice;
 
 typedef struct {
-    float grid[IMG_ROWS][IMG_COLS];      /* luminance 0..1, row 0 = top */
+    float grid[IMG_ROWS_MAX][IMG_COLS_MAX];  /* luminance 0..1, row 0 = top; cols x rows used */
+    int cols, rows;                      /* size of the current picture's grid */
     int has_image;
     int ctl_left;                        /* samples until the next control-rate analysis */
     float bend;                          /* pitch-bend frequency multiplier */
@@ -53,17 +57,16 @@ typedef struct {
 
 extern const char *const GS_IMG_SCALE_NAMES[];
 #define GS_IMG_NUM_SCALES 8
-extern const int GS_IMG_GRID_STEPS[8];     /* 0 = smooth */
 
 void gs_img_init(GsImgSynth *s);
 void gs_img_stop(GsImgSynth *s);
-/* Copy a new IMG_ROWS x IMG_COLS luminance grid in (row 0 = top). Audio thread. */
-void gs_img_set_grid(GsImgSynth *s, const float *grid);
+/* Copy a new cols x rows luminance grid in (row 0 = top, row-major). Audio thread. */
+void gs_img_set_grid(GsImgSynth *s, const float *grid, int cols, int rows);
 /* Fill out[] with the MIDI notes for key/scale/low note/range; returns count. */
 int  gs_img_build_notes(int key, int scale, int low, int range, int *out, int max);
 /* Render (adds into L/R). p = engine parameter array. */
 void gs_img_process(GsImgSynth *s, const float *p, float *L, float *R, int n, int sr);
-/* Steps per sweep for the GRID parameter (Smooth counts as 16 for sync). */
+/* Steps per sweep for the STEPS parameter (0 = smooth, counts as 16 for sync). */
 int  gs_img_sync_steps(const float *p);
 /* MIDI notes currently gated on (note voices + bright-mode melody). Returns count. */
 int  gs_img_active_notes(const GsImgSynth *s, int *out, int max);

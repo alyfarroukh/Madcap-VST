@@ -23,7 +23,8 @@ inline std::unique_ptr<madcap::ImageGrid> posterGrid(int i)
 {
     auto px = madcap::renderPoster(i);
     auto g = std::make_unique<madcap::ImageGrid>();
-    g->luma = madcap::lumaGridFromABGR(px.data(), 512, 256, 512);
+    madcap::lumaGridSize(512, 256, g->cols, g->rows);
+    g->luma = madcap::lumaGridFromABGR(px.data(), 512, 256, 512, g->cols, g->rows);
     return g;
 }
 

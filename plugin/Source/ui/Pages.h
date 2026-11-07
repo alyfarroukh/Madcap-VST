@@ -34,6 +34,10 @@ protected:
     HudButton& button(const juce::String& text, juce::Colour c = colours::teal) { return add<HudButton>(text, c); }
     virtual void layout() = 0;
     virtual void update() {}   // per-frame page logic (labels, button states)
+    // Grey the page out (its input is not the live one); components in keepBright stay lit.
+    void keepBright(std::initializer_list<juce::Component*> comps);
+    void setDimmed(bool dim);
+    bool dimmed() const noexcept { return dimmed_; }
 
     MadcapProcessor& proc_;
     const int page_;
@@ -41,6 +45,8 @@ protected:
     LockToggle lock_;
 
 private:
+    juce::Array<juce::Component*> keep_;
+    bool dimmed_ = false;
     std::vector<std::unique_ptr<juce::Component>> owned_;
     std::vector<Tickable*> ticks_;
 };

@@ -15,7 +15,6 @@ static const char *const SRC_LABELS[] = {"Sample", "Image"};
 static const char *const IMG_SOURCE_LABELS[] = {"Noise", "Notes", "Noise+Notes"};
 static const char *const IMG_MODE_LABELS[] = {"Spectral", "Bright", "Height"};
 static const char *const IMG_READ_LABELS[] = {"Light", "Dark"};
-static const char *const IMG_GRID_LABELS[] = {"Smooth", "8", "12", "16", "24", "32", "48", "64"};
 static const char *const IMG_WAVE_LABELS[] = {"Sine", "Tri", "Saw", "Square"};
 static const char *const DRV_TYPES[] = {"Tape", "Fuzz", "Crush"};
 static const char *const DRV_OS_LABELS[] = {"2x", "4x"};
@@ -134,7 +133,7 @@ const GsParamDesc GS_PARAMS[P_COUNT] = {
     [P_IMG_SCALE]  = D("img_scale",    "Image Scale",  PAGE_IMAGE, 0, 7, 0, FMT_ENUM, GS_IMG_SCALE_NAMES),
     [P_IMG_LOW]    = D("img_low",      "Lowest Note",  PAGE_IMAGE, 24, 72, 45, FMT_INT, 0),
     [P_IMG_RANGE]  = D("img_range",    "Range",        PAGE_IMAGE, 1, 5, 3, FMT_INT, 0),
-    [P_IMG_GRID]   = D("img_grid",     "Rhythm Grid",  PAGE_IMAGE, 0, 7, 3, FMT_ENUM, IMG_GRID_LABELS),
+    [P_IMG_GRID]   = D("img_steps",    "Grid Steps",   PAGE_IMAGE, 0, 128, 16, FMT_INT, 0),
     [P_IMG_VOICES] = D("img_voices",   "Voices/Step",  PAGE_IMAGE, 1, 8, 4, FMT_INT, 0),
     [P_IMG_WAVE]   = D("img_wave",     "Waveform",     PAGE_IMAGE, 0, 3, 1, FMT_ENUM, IMG_WAVE_LABELS),
     [P_IMG_DECAY]  = C("img_decay",    "Note Decay",   PAGE_IMAGE, 0, 1, 0.55f, FMT_PCT, 1),
@@ -195,7 +194,7 @@ const char *const GS_PARAM_SHORT[P_COUNT] = {
     [P_TRIM_OUT] = "OUT", [P_DRV_ON] = "ON", [P_CMP_ON] = "ON", [P_DLY_ON] = "ON", [P_REV_ON] = "ON", [P_REV_MOD] = "MOD",
     [P_SRC] = "INPUT", [P_IMG_SOURCE] = "SOUND SOURCE", [P_IMG_MODE] = "MODE", [P_IMG_READ] = "LISTEN TO",
     [P_IMG_KEY] = "KEY", [P_IMG_SCALE] = "SCALE", [P_IMG_LOW] = "LOW", [P_IMG_RANGE] = "RANGE",
-    [P_IMG_GRID] = "GRID", [P_IMG_VOICES] = "VOICES", [P_IMG_WAVE] = "WAVE", [P_IMG_DECAY] = "DECAY",
+    [P_IMG_GRID] = "STEPS", [P_IMG_VOICES] = "VOICES", [P_IMG_WAVE] = "WAVE", [P_IMG_DECAY] = "DECAY",
     [P_IMG_SWEEP] = "SWEEP", [P_IMG_SYNC] = "SYNC", [P_IMG_LEVEL] = "LEVEL",
     [P_ARP_ON] = "ARP", [P_ARP_MODE] = "PATTERN", [P_ARP_RATE] = "RATE", [P_ARP_OCT] = "OCT", [P_ARP_GATE] = "GATE",
     [P_ARP_SWING] = "SWING", [P_ARP_ATTACK] = "ATTACK", [P_ARP_RELEASE] = "RELEASE", [P_ARP_START] = "START",
@@ -269,6 +268,12 @@ void gs_param_format(int id, float v, char *buf, int buflen)
         return;
     }
     if (id == P_IMG_RANGE) { snprintf(buf, buflen, "%d oct", (int)lroundf(v)); return; }
+    if (id == P_IMG_GRID) {
+        int st = (int)lroundf(v);
+        if (st <= 0) snprintf(buf, buflen, "Smooth");
+        else snprintf(buf, buflen, "%d", st);
+        return;
+    }
     if (id == P_OCTAVE) { snprintf(buf, buflen, "%+d", (int)lroundf(v)); return; }
     if (id == P_BPM) { snprintf(buf, buflen, "%.1f BPM", v); return; }
     if (id == P_REV_SIZE) {                                   /* show the decay time */
@@ -343,6 +348,7 @@ float gs_param_parse(int id, const char *text)
         }
     }
     if (id == P_REV_SIZE && (ieq(t, "inf") || ieq(t, "infinite"))) return 1.0f;
+    if (id == P_IMG_GRID && (ieq(t, "smooth") || ieq(t, "off"))) return 0.0f;
     char *end;
     double x = strtod(t, &end);
     if (end == t) return d->def;

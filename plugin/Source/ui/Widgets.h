@@ -137,6 +137,21 @@ private:
 };
 
 //==============================================================================
+// SAMPLE ON / IMAGE ON block at the top of the SAMPLE and IMAGE tabs (bound to Input).
+class SourceButton : public ParamWidget {
+public:
+    SourceButton(MadcapProcessor& p, int which);   // 0 = sample, 1 = image
+    void paint(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    bool keyPressed(const juce::KeyPress&) override;
+    bool isOn() const { return juce::roundToInt(value_) == which_; }
+
+private:
+    void toggle();
+    int which_;
+};
+
+//==============================================================================
 // Tempo field: drag up / down (Shift = fine), wheel, double-click to type a value.
 class BpmField : public ParamWidget, private juce::TextEditor::Listener {
 public:

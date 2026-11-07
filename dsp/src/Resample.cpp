@@ -77,12 +77,20 @@ void normalizePeak(std::vector<float>& buf, float peak)
     for (float& v : buf) v *= g;
 }
 
-std::vector<float> lumaGridFromABGR(const uint32_t* px, int w, int h, int stride)
+std::vector<float> lumaGridFromABGR(const uint32_t* px, int w, int h, int stride, int cols, int rows)
 {
-    std::vector<float> grid((size_t)IMG_ROWS * IMG_COLS, 0.0f);
-    if (!px || w <= 0 || h <= 0) return grid;
-    gs_rgba_to_grid(reinterpret_cast<const unsigned*>(px), w, h, stride, grid.data(), IMG_COLS, IMG_ROWS);
+    std::vector<float> grid((size_t)std::max(cols, 1) * (size_t)std::max(rows, 1), 0.0f);
+    if (!px || w <= 0 || h <= 0 || cols <= 0 || rows <= 0) return grid;
+    gs_rgba_to_grid(reinterpret_cast<const unsigned*>(px), w, h, stride, grid.data(), cols, rows);
     return grid;
+}
+
+void lumaGridSize(int w, int h, int& cols, int& rows)
+{
+    // follow the picture: one column per pixel up to the maximum, never squashing the aspect
+    double sc = std::min({1.0, (double)IMG_COLS_MAX / std::max(w, 1), (double)IMG_ROWS_MAX / std::max(h, 1)});
+    cols = std::clamp((int)std::lround(w * sc), IMG_COLS_MIN, IMG_COLS_MAX);
+    rows = std::clamp((int)std::lround(h * sc), IMG_ROWS_MIN, IMG_ROWS_MAX);
 }
 
 std::vector<uint32_t> renderPoster(int index, int w, int h)

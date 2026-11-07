@@ -13,8 +13,10 @@ std::vector<float> resampleMono(const float* in, std::size_t n, double srcRate, 
 // Peak-normalise in place to the given linear peak (no-op for silence).
 void normalizePeak(std::vector<float>& buf, float peak = 0.89f);
 
-// Luminance grid (IMG_ROWS x IMG_COLS, row 0 = top) from 0xAABBGGRR pixels.
-std::vector<float> lumaGridFromABGR(const uint32_t* px, int w, int h, int stride);
+// Luminance grid (cols x rows, row 0 = top) from 0xAABBGGRR pixels (box filtered).
+std::vector<float> lumaGridFromABGR(const uint32_t* px, int w, int h, int stride, int cols, int rows);
+// Grid size for a w x h picture: its own resolution, clamped to the engine limits.
+void lumaGridSize(int w, int h, int& cols, int& rows);
 
 // One of the built-in Bauhaus posters as 0xAABBGGRR pixels (w x h).
 std::vector<uint32_t> renderPoster(int index, int w = 512, int h = 256);

@@ -131,7 +131,7 @@ TEST_CASE("Demo voice and posters exist", "[assets]")
     CHECK(madcap::posterCount() == 4);
     for (int i = 0; i < 4; ++i) {
         auto px = madcap::renderPoster(i, 128, 64);
-        auto g = madcap::lumaGridFromABGR(px.data(), 128, 64, 128);
+        auto g = madcap::lumaGridFromABGR(px.data(), 128, 64, 128, 64, 32);
         float mn = 1, mx = 0;
         for (float x : g) { mn = std::min(mn, x); mx = std::max(mx, x); }
         CHECK(mx - mn > 0.3f);   // there is a picture

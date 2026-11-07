@@ -79,11 +79,42 @@ public:
     void mouseUp(const juce::MouseEvent&) override;
 
 private:
+    juce::Rectangle<float> imageRect() const;   // the picture, fitted with its own aspect ratio
     MadcapProcessor& proc_;
     std::shared_ptr<const PictureData> pic_;
     int version_ = -1;
     float phase_ = 0.0f;
     bool scrubbing_ = false;
+};
+
+//==============================================================================
+// 3D wireframe terrain generated from the picture, rolling through a fixed sweeper.
+class TerrainView : public juce::Component, public juce::SettableTooltipClient, public Tickable {
+public:
+    explicit TerrainView(MadcapProcessor& p);
+    void paint(juce::Graphics&) override;
+    void tick() override;
+
+private:
+    float heightAt(float col, float row) const;
+    MadcapProcessor& proc_;
+    std::shared_ptr<const PictureData> pic_;
+    int version_ = -1;
+    float phase_ = 0.0f;
+    bool dark_ = false;
+};
+
+//==============================================================================
+// Record input level bar.
+class InputMeter : public juce::Component, public juce::SettableTooltipClient, public Tickable {
+public:
+    explicit InputMeter(MadcapProcessor& p);
+    void paint(juce::Graphics&) override;
+    void tick() override;
+
+private:
+    MadcapProcessor& proc_;
+    float level_ = 0.0f;
 };
 
 //==============================================================================
@@ -171,26 +202,6 @@ private:
     int padAt(juce::Point<float>) const;
     MadcapProcessor& proc_;
     int mask_ = 1, midi_ = 0, key_ = 0, scale_ = 1, pressed_ = -1;
-};
-
-//==============================================================================
-// The Vita's rear touchpad: X picks the chord type, Y sets the voicing.
-class RearTouchPad : public juce::Component, public juce::SettableTooltipClient, public Tickable {
-public:
-    explicit RearTouchPad(MadcapProcessor& p);
-    void paint(juce::Graphics&) override;
-    void tick() override;
-    void mouseDown(const juce::MouseEvent&) override;
-    void mouseDrag(const juce::MouseEvent&) override;
-    void mouseUp(const juce::MouseEvent&) override;
-
-private:
-    void setFrom(juce::Point<float>);
-    MadcapProcessor& proc_;
-    ParamPair xy_;
-    float chord_ = 0, voicing_ = 0;
-    bool touching_ = false;
-    juce::Point<float> touch_;
 };
 
 //==============================================================================

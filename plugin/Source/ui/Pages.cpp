@@ -1,4 +1,5 @@
 #include "Pages.h"
+#include "StandaloneIO.h"
 
 namespace madcap::ui {
 
@@ -32,6 +33,20 @@ void Page::tick()
 
 void Page::paint(juce::Graphics&) {}
 
+void Page::keepBright(std::initializer_list<juce::Component*> comps)
+{
+    for (auto* c : comps) keep_.addIfNotAlreadyThere(c);
+}
+
+void Page::setDimmed(bool dim)
+{
+    if (dim == dimmed_) return;
+    dimmed_ = dim;
+    for (auto* c : getChildren())
+        if (c != &lock_ && !keep_.contains(c)) c->setAlpha(dim ? 0.3f : 1.0f);
+    repaint();
+}
+
 void Page::resized()
 {
     layout();
@@ -39,26 +54,163 @@ void Page::resized()
 }
 
 //==============================================================================
+// Where REC records from. Standalone: the audio interface (device + input channel).
+// In a DAW: the plugin's sidechain bus. Both: which channel(s) to record + a level meter.
+class RecordInputPanel : public juce::Component, public Tickable, private juce::ChangeListener {
+public:
+    explicit RecordInputPanel(MadcapProcessor& p) : proc_(p), meter_(p), settings_("Audio settings")
+    {
+        addAndMakeVisible(meter_);
+        addAndMakeVisible(channel_);
+        channel_.addItemList({ "Record: all inputs (mix)", "Record: input 1 / left", "Record: input 2 / right" }, 1);
+        channel_.setSelectedId(p.recordChannel() + 1, juce::dontSendNotification);
+        channel_.setTooltip("Which channel(s) of the record input REC captures");
+        channel_.onChange = [this] { proc_.setRecordChannel(channel_.getSelectedId() - 1); };
+
+        dm_ = standalone::deviceManager();
+        if (dm_ != nullptr) {
+            addAndMakeVisible(device_);
+            addAndMakeVisible(input_);
+            addAndMakeVisible(settings_);
+            device_.setTooltip("Audio input device (microphone, interface, ...)");
+            input_.setTooltip("Input channel(s) of the device: plug a mic or guitar into this input");
+            settings_.setTooltip("All audio settings: driver type, devices, sample rate, buffer size");
+            settings_.fontSize = 11.0f;
+            device_.onChange = [this] { chooseDevice(); };
+            input_.onChange = [this] { chooseChannels(); };
+            settings_.onClick = [] { standalone::showAudioSettings(); };
+            dm_->addChangeListener(this);
+            refresh();
+        }
+    }
+
+    ~RecordInputPanel() override
+    {
+        if (dm_ != nullptr) dm_->removeChangeListener(this);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced(8, 0).withTrimmedTop(20);
+        auto row1 = r.removeFromTop(24);
+        r.removeFromTop(6);
+        auto row2 = r.removeFromTop(22);
+        if (dm_ != nullptr) {
+            device_.setBounds(row1.removeFromLeft(240));
+            row1.removeFromLeft(8);
+            input_.setBounds(row1.removeFromLeft(210));
+            row1.removeFromLeft(8);
+            settings_.setBounds(row1.removeFromLeft(120));
+        }
+        channel_.setBounds(row2.removeFromLeft(240));
+        row2.removeFromLeft(10);
+        meter_.setBounds(row2.reduced(0, 4));
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        drawPanel(g, getLocalBounds().toFloat(), "Record input", colours::orange);
+        if (dm_ == nullptr)
+            drawLabel(g, "REC records Madcap's sidechain input: in your DAW, enable the sidechain and route your mic / guitar track to it",
+                      getLocalBounds().toFloat().reduced(8.0f, 0.0f).withTrimmedTop(20.0f).withHeight(24.0f),
+                      juce::Justification::centredLeft, 11.0f, colours::text, Weight::Medium);
+    }
+
+    void tick() override { meter_.tick(); }
+
+private:
+    void changeListenerCallback(juce::ChangeBroadcaster*) override { refresh(); }
+
+    void refresh()
+    {
+        if (dm_ == nullptr) return;
+        auto* type = dm_->getCurrentDeviceTypeObject();
+        const auto setup = dm_->getAudioDeviceSetup();
+        device_.clear(juce::dontSendNotification);
+        input_.clear(juce::dontSendNotification);
+        if (type == nullptr) return;
+        separate_ = type->hasSeparateInputsAndOutputs();
+        const auto names = type->getDeviceNames(separate_);
+        for (int i = 0; i < names.size(); ++i) device_.addItem(names[i], i + 1);
+        const auto current = separate_ ? setup.inputDeviceName : setup.outputDeviceName;
+        device_.setText(current.isNotEmpty() ? current : juce::String("No input device"), juce::dontSendNotification);
+
+        if (auto* dev = dm_->getCurrentAudioDevice()) {
+            const auto chans = dev->getInputChannelNames();
+            for (int i = 0; i < chans.size(); ++i)
+                input_.addItem("In " + juce::String(i + 1) + (chans[i].isNotEmpty() ? ": " + chans[i] : juce::String()), 100 + i);
+            for (int i = 0; i + 1 < chans.size(); i += 2)
+                input_.addItem("In " + juce::String(i + 1) + " + " + juce::String(i + 2) + " (stereo)", 200 + i);
+            const auto bits = dev->getActiveInputChannels();
+            const int n = bits.countNumberOfSetBits(), first = bits.findNextSetBit(0);
+            if (n == 1) input_.setSelectedId(100 + first, juce::dontSendNotification);
+            else if (n == 2 && bits[first + 1] && first % 2 == 0) input_.setSelectedId(200 + first, juce::dontSendNotification);
+            else input_.setText(n == 0 ? juce::String("No input channels") : juce::String(n) + " inputs", juce::dontSendNotification);
+        } else {
+            input_.setText("No device", juce::dontSendNotification);
+        }
+    }
+
+    void apply(juce::AudioDeviceManager::AudioDeviceSetup setup)
+    {
+        const auto err = dm_->setAudioDeviceSetup(setup, true);
+        standalone::unmuteInput();
+        if (err.isNotEmpty()) juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Audio input", err);
+        refresh();
+    }
+
+    void chooseDevice()
+    {
+        auto setup = dm_->getAudioDeviceSetup();
+        const auto name = device_.getText();
+        if (separate_) setup.inputDeviceName = name;
+        else setup.inputDeviceName = setup.outputDeviceName = name;
+        setup.useDefaultInputChannels = true;
+        apply(setup);
+    }
+
+    void chooseChannels()
+    {
+        const int id = input_.getSelectedId();
+        if (id < 100) return;
+        auto setup = dm_->getAudioDeviceSetup();
+        setup.useDefaultInputChannels = false;
+        setup.inputChannels.clear();
+        if (id >= 200) setup.inputChannels.setRange(id - 200, 2, true);
+        else setup.inputChannels.setBit(id - 100);
+        apply(setup);
+    }
+
+    MadcapProcessor& proc_;
+    juce::AudioDeviceManager* dm_ = nullptr;
+    bool separate_ = true;
+    InputMeter meter_;
+    juce::ComboBox device_, input_, channel_;
+    HudButton settings_;
+};
+
+//==============================================================================
 class SamplePage : public Page {
 public:
     explicit SamplePage(MadcapProcessor& p)
         : Page(p, PAGE_SAMPLE, "Sample"),
+          power_(add<SourceButton>(p, 0)), input_(seg(P_SRC, {"SAMPLE", "IMAGE"}, false)),
           wave_(add<WaveformView>(p)), slices_(add<SliceStrip>(p)),
           load_(button("Load")), rec_(button("Rec", colours::orange)), play_(button("Play", colours::green)),
           loop_(led(P_PREVIEW_LOOP, colours::green)), crop_(button("Crop", colours::orange)), demo_(button("Demo")),
-          input_(seg(P_SRC)), root_(stepper(P_SAMPLE_ROOT, {}, true)),
+          root_(stepper(P_SAMPLE_ROOT, {}, true)),
           count_(seg(P_SLICES)), mode_(seg(P_SLICE_MODE)), slice_(stepper(P_SLICE_SEL)), span_(stepper(P_SLICE_SPAN)),
           tempoSrc_(seg(P_TEMPO_SRC)), bpm_(add<BpmField>(p)), follow_(led(P_FOLLOW_HOST, colours::amber)),
-          tap_(button("Tap", colours::amber))
+          tap_(button("Tap", colours::amber)), recPanel_(add<RecordInputPanel>(p))
     {
         load_.setTooltip("Load WAV, AIFF, FLAC, MP3 or OGG (up to 60 s, mixed to mono). You can also drop a file on Madcap.");
-        rec_.setTooltip(p.isStandalone() ? "Record from the audio input (choose it in the audio settings), press again to stop"
-                                         : "Record from Madcap's sidechain input, press again to stop");
+        rec_.setTooltip("Record from the RECORD INPUT below, press again to stop: the take becomes the sample");
         play_.setTooltip("Audition the cut dry (works while the transport is stopped)");
         crop_.setTooltip("Make the cut permanent");
         demo_.setTooltip("Load the built-in sung 'ahh' demo voice (C)");
         tap_.setTooltip("Tap the tempo");
         input_.setAccent(colours::green);
+        input_.setTooltip("Input: SAMPLE or IMAGE (only one plays at a time)");
         loop_.setLabel("Loop");
         follow_.setLabel("Follow host transport");
         load_.onClick = [this] {
@@ -81,73 +233,75 @@ public:
         tap_.setVisible(sa);
         tempoSrc_.setVisible(!sa);
         follow_.setVisible(!sa);
+        keepBright({ &power_, &input_, &recPanel_, &rec_, &load_, &demo_, &tap_, &bpm_, &tempoSrc_, &follow_ });
     }
 
     void layout() override
     {
-        wave_.setBounds(0, 0, W, 214);
-        slices_.setBounds(0, 218, W, 24);
+        power_.setBounds(0, 0, 150, 32);
+        input_.setBounds(160, 2, 200, 28);
+        wave_.setBounds(0, 40, W, 176);
+        slices_.setBounds(0, 220, W, 24);
         load_.setBounds(0, 254, 84, 30);
         rec_.setBounds(90, 254, 84, 30);
         play_.setBounds(180, 254, 84, 30);
         loop_.setBounds(270, 254, 84, 30);
         crop_.setBounds(360, 254, 84, 30);
         demo_.setBounds(450, 254, 70, 30);
-        input_.setBounds(540, 244, 190, 40);
-        root_.setBounds(744, 244, 110, 40);
-        count_.setBounds(0, 300, 300, 40);
-        mode_.setBounds(312, 300, 160, 40);
-        slice_.setBounds(484, 300, 110, 40);
-        span_.setBounds(606, 300, 110, 40);
+        root_.setBounds(540, 244, 110, 40);
+        count_.setBounds(0, 298, 300, 40);
+        mode_.setBounds(312, 298, 160, 40);
+        slice_.setBounds(484, 298, 110, 40);
+        span_.setBounds(606, 298, 110, 40);
         if (proc_.isStandalone()) {
-            tap_.setBounds(0, 364, 110, 40);
-            bpm_.setBounds(120, 356, 120, 48);
+            tap_.setBounds(0, 358, 110, 44);
+            bpm_.setBounds(120, 350, 120, 52);
         } else {
-            tempoSrc_.setBounds(0, 356, 180, 40);
-            bpm_.setBounds(190, 356, 120, 40);
-            follow_.setBounds(322, 370, 210, 26);
+            tempoSrc_.setBounds(0, 350, 160, 40);
+            bpm_.setBounds(168, 350, 110, 40);
+            follow_.setBounds(0, 398, 210, 24);
         }
+        recPanel_.setBounds(296, 348, 632, 76);
     }
 
     void update() override
     {
+        setDimmed(juce::roundToInt(proc_.value(P_SRC)) != 0);
         const bool recording = proc_.isRecording();
         rec_.setButtonText(recording ? "Stop" : "Rec");
         rec_.setFilled(recording);
         play_.setFilled(proc_.engine().isPreviewing());
         const bool host = !proc_.isStandalone() && proc_.value(P_TEMPO_SRC) < 0.5f && proc_.hostBpm() > 1.0;
         bpm_.setDisplayOverride(host ? (float)proc_.hostBpm() : -1.0f, host);
-        if (recording || recShown_) repaint(0, 410, W - 80, 54);
+        if (recording || recShown_) repaint(0, 426, W - 80, 30);
         recShown_ = recording;
     }
 
     void paint(juce::Graphics& g) override
     {
-        auto info = juce::Rectangle<float>(0, 418, (float)W - 90.0f, 20.0f);
+        auto info = juce::Rectangle<float>(0, 430, (float)W - 90.0f, 20.0f);
         if (proc_.isRecording()) {
             drawLed(g, { 8.0f, info.getCentreY() }, 5.0f, true, colours::orange);
             drawLabel(g, "REC  " + juce::String(proc_.recordingSeconds(), 1) + " s / 60 s", info.withTrimmedLeft(20.0f),
                       juce::Justification::centredLeft, 15.0f, colours::orange, Weight::Bold);
-            const float pk = juce::jlimit(0.0f, 1.0f, proc_.recordingPeak());
-            auto bar = juce::Rectangle<float>(200.0f, info.getY() + 6.0f, 240.0f, 8.0f);
-            g.setColour(colours::blueDim);
-            g.fillRect(bar);
-            g.setColour(pk > 0.9f ? colours::red : colours::orange);
-            g.fillRect(bar.withWidth(bar.getWidth() * pk));
         } else if (!proc_.hasRecordInput()) {
-            drawLabel(g, proc_.isStandalone() ? "No audio input selected - REC needs a microphone (Options > Audio settings)"
-                                              : "REC records the sidechain input - enable and route it in your DAW",
+            drawLabel(g, proc_.isStandalone() ? "No audio input: choose a device and input channel in RECORD INPUT"
+                                              : "No sidechain connected: REC needs audio routed to Madcap's sidechain input",
                       info, juce::Justification::centredLeft, 11.0f, colours::textDim);
         }
+        if (dimmed())
+            drawLabel(g, "IMAGE is the live input - press SAMPLE ON to play the sample", { 380.0f, 2.0f, 548.0f, 28.0f },
+                      juce::Justification::centredRight, 12.0f, colours::amber, Weight::Bold);
     }
 
 private:
+    SourceButton& power_;
+    SegmentSwitch& input_;
     WaveformView& wave_;
     SliceStrip& slices_;
     HudButton &load_, &rec_, &play_;
     LedToggle& loop_;
     HudButton &crop_, &demo_;
-    SegmentSwitch& input_;
     Stepper& root_;
     SegmentSwitch &count_, &mode_;
     Stepper &slice_, &span_;
@@ -155,6 +309,7 @@ private:
     BpmField& bpm_;
     LedToggle& follow_;
     HudButton& tap_;
+    RecordInputPanel& recPanel_;
     std::unique_ptr<juce::FileChooser> chooser_;
     bool recShown_ = false;
 };
@@ -164,24 +319,29 @@ class ImagePage : public Page {
 public:
     explicit ImagePage(MadcapProcessor& p)
         : Page(p, PAGE_IMAGE, "Image"),
-          card_(add<ImageCard>(p)), grid_(add<AnalysisGrid>(p)),
+          power_(add<SourceButton>(p, 1)), input_(seg(P_SRC, {"SAMPLE", "IMAGE"}, false)),
           prev_(button("<")), next_(button(">")), load_(button("Load image")),
           hold_(led(P_IMG_HOLD, colours::orange)), sync_(led(P_IMG_SYNC)),
-          listen_(seg(P_IMG_READ)), sound_(seg(P_IMG_SOURCE)),
-          decay_(knob(P_IMG_DECAY)), sweep_(knob(P_IMG_SWEEP)), level_(knob(P_IMG_LEVEL)), dry_(knob(P_IMG_DRY)),
-          mode_(seg(P_IMG_MODE)), gridSeg_(seg(P_IMG_GRID)), wave_(seg(P_IMG_WAVE)),
+          card_(add<ImageCard>(p)), terrain_(add<TerrainView>(p)), grid_(add<AnalysisGrid>(p)),
+          mode_(seg(P_IMG_MODE)), sound_(seg(P_IMG_SOURCE)), wave_(seg(P_IMG_WAVE)), listen_(seg(P_IMG_READ)),
           key_(stepper(P_IMG_KEY, {}, true)), scale_(stepper(P_IMG_SCALE, {}, true)),
           low_(stepper(P_IMG_LOW, [](float v) { return midiNoteName(juce::roundToInt(v)); })),
           range_(stepper(P_IMG_RANGE, [](float v) { return juce::String(juce::roundToInt(v)) + " OCT"; })),
-          voices_(stepper(P_IMG_VOICES))
+          voices_(stepper(P_IMG_VOICES)),
+          steps_(knob(P_IMG_GRID, colours::amber)), decay_(knob(P_IMG_DECAY)), sweep_(knob(P_IMG_SWEEP)),
+          level_(knob(P_IMG_LEVEL)), dry_(knob(P_IMG_DRY))
     {
         prev_.setTooltip("Previous built-in poster");
         next_.setTooltip("Next built-in poster");
-        load_.setTooltip("Load a PNG, JPG, BMP or GIF (any size). You can also drop a picture on Madcap.");
+        load_.setTooltip("Load a PNG, JPG, BMP or GIF of any size: the whole picture is used, never cropped. "
+                         "You can also drop a picture on Madcap.");
         hold_.setLabel("Hold");
         sync_.setLabel("Sync");
         hold_.setTooltip("Freeze the 6 s live buffer that the grains and the arp read from");
         sync_.setTooltip("Each step = a 16th note at the tempo, locked to the host bar");
+        steps_.setTooltip("Grid steps per sweep: 0 = smooth (held, sliding tones), 1-128 = separate notes per step");
+        input_.setAccent(colours::green);
+        input_.setTooltip("Input: SAMPLE or IMAGE (only one plays at a time)");
         prev_.onClick = [this] { stepPoster(-1); };
         next_.onClick = [this] { stepPoster(1); };
         load_.onClick = [this] {
@@ -192,6 +352,7 @@ public:
                                       if (f.existsAsFile()) proc_.loadImageAsync(f);
                                   });
         };
+        keepBright({ &power_, &input_, &prev_, &next_, &load_ });
     }
 
     void stepPoster(int dir)
@@ -203,31 +364,32 @@ public:
 
     void layout() override
     {
-        card_.setBounds(0, 0, 512, 256);
-        prev_.setBounds(0, 266, 30, 30);
-        next_.setBounds(188, 266, 30, 30);
-        load_.setBounds(226, 266, 112, 30);
-        hold_.setBounds(346, 266, 80, 30);
-        sync_.setBounds(432, 266, 80, 30);
-        listen_.setBounds(0, 308, 160, 40);
-        sound_.setBounds(170, 308, 342, 40);
-        decay_.setBounds(16, 360, 96, 96);
-        sweep_.setBounds(144, 360, 96, 96);
-        level_.setBounds(272, 360, 96, 96);
-        dry_.setBounds(400, 360, 96, 96);
-        grid_.setBounds(528, 0, 400, 150);
-        mode_.setBounds(528, 158, 400, 40);
-        gridSeg_.setBounds(528, 206, 400, 40);
-        wave_.setBounds(528, 254, 400, 40);
-        key_.setBounds(528, 304, 90, 40);
-        scale_.setBounds(626, 304, 144, 40);
-        low_.setBounds(778, 304, 72, 40);
-        range_.setBounds(856, 304, 72, 40);
-        voices_.setBounds(528, 352, 110, 40);
+        power_.setBounds(0, 0, 150, 32);
+        input_.setBounds(160, 2, 200, 28);
+        prev_.setBounds(380, 2, 28, 28);
+        next_.setBounds(566, 2, 28, 28);
+        load_.setBounds(602, 2, 118, 28);
+        hold_.setBounds(728, 2, 96, 28);
+        sync_.setBounds(832, 2, 96, 28);
+        card_.setBounds(0, 40, 452, 196);
+        terrain_.setBounds(0, 242, 452, 222);
+        grid_.setBounds(464, 40, 464, 104);
+        mode_.setBounds(464, 150, 236, 40);
+        sound_.setBounds(708, 150, 220, 40);
+        wave_.setBounds(464, 196, 236, 40);
+        listen_.setBounds(708, 196, 220, 40);
+        key_.setBounds(464, 242, 84, 40);
+        scale_.setBounds(556, 242, 128, 40);
+        low_.setBounds(692, 242, 74, 40);
+        range_.setBounds(774, 242, 74, 40);
+        voices_.setBounds(856, 242, 72, 40);
+        RingKnob* ks[5] = { &steps_, &decay_, &sweep_, &level_, &dry_ };
+        for (int i = 0; i < 5; ++i) ks[i]->setBounds(464 + i * 93, 312, 88, 100);
     }
 
     void update() override
     {
+        setDimmed(juce::roundToInt(proc_.value(P_SRC)) != 1);
         const int v = proc_.image().version();
         int notes[IMG_MAX_NOTES];
         const int n = gs_img_build_notes(juce::roundToInt(proc_.value(P_IMG_KEY)), juce::roundToInt(proc_.value(P_IMG_SCALE)),
@@ -240,22 +402,26 @@ public:
     void paint(juce::Graphics& g) override
     {
         auto pic = proc_.image().get();
-        drawLabel(g, pic ? pic->name : juce::String("-"), { 32.0f, 266.0f, 154.0f, 30.0f }, juce::Justification::centred, 13.0f,
+        drawLabel(g, pic ? pic->name : juce::String("-"), { 410.0f, 2.0f, 154.0f, 28.0f }, juce::Justification::centred, 13.0f,
                   colours::text, Weight::Bold);
-        drawLabel(g, info_, { 646.0f, 366.0f, 282.0f, 20.0f }, juce::Justification::centredLeft, 13.0f, colours::teal, Weight::Bold);
-        drawLabel(g, "Harmony from the PLAY tab: interval stacks companions, chord degree shifts the melody",
-                  { 528.0f, 400.0f, 320.0f, 30.0f }, juce::Justification::topLeft, 10.5f, colours::textDim, Weight::Medium);
+        drawLabel(g, info_, { 464.0f, 288.0f, 464.0f, 20.0f }, juce::Justification::centredLeft, 13.0f, colours::teal, Weight::Bold);
+        drawLabel(g, dimmed() ? "SAMPLE is the live input - press IMAGE ON to hear the sweeper"
+                              : "Harmony from the PLAY tab: interval stacks companions, chord degree shifts the melody",
+                  { 464.0f, 416.0f, 380.0f, 30.0f }, juce::Justification::topLeft, 10.5f,
+                  dimmed() ? colours::amber : colours::textDim, Weight::Medium);
     }
 
 private:
-    ImageCard& card_;
-    AnalysisGrid& grid_;
+    SourceButton& power_;
+    SegmentSwitch& input_;
     HudButton &prev_, &next_, &load_;
     LedToggle &hold_, &sync_;
-    SegmentSwitch &listen_, &sound_;
-    RingKnob &decay_, &sweep_, &level_, &dry_;
-    SegmentSwitch &mode_, &gridSeg_, &wave_;
+    ImageCard& card_;
+    TerrainView& terrain_;
+    AnalysisGrid& grid_;
+    SegmentSwitch &mode_, &sound_, &wave_, &listen_;
     Stepper &key_, &scale_, &low_, &range_, &voices_;
+    RingKnob &steps_, &decay_, &sweep_, &level_, &dry_;
     std::unique_ptr<juce::FileChooser> chooser_;
     int version_ = -1;
     juce::String info_;
@@ -521,7 +687,7 @@ class PlayPage : public Page {
 public:
     explicit PlayPage(MadcapProcessor& p)
         : Page(p, PAGE_PLAY, "Play"),
-          field_(add<GrainField>(p, true)), rear_(add<RearTouchPad>(p)),
+          field_(add<GrainField>(p, true)),
           key_(stepper(P_KEY, {}, true)), oct_(stepper(P_OCTAVE)), scale_(stepper(P_SCALE, {}, true)),
           voicing_(knob(P_VOICING)), master_(knob(P_MASTER, colours::orange)),
           interval_(seg(P_CHORD)), pads_(add<ChordPads>(p)),
@@ -540,8 +706,7 @@ public:
 
     void layout() override
     {
-        field_.setBounds(0, 0, 440, 214);
-        rear_.setBounds(452, 0, 260, 214);
+        field_.setBounds(0, 0, 712, 214);
         key_.setBounds(724, 0, 96, 40);
         oct_.setBounds(832, 0, 96, 40);
         scale_.setBounds(724, 50, 204, 40);
@@ -563,7 +728,6 @@ public:
 
 private:
     GrainField& field_;
-    RearTouchPad& rear_;
     Stepper &key_, &oct_, &scale_;
     RingKnob &voicing_, &master_;
     SegmentSwitch& interval_;

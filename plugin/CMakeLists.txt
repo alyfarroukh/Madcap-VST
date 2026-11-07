@@ -53,6 +53,7 @@ target_sources(Madcap PRIVATE
     Source/SampleStore.cpp
     Source/ImageStore.cpp
     Source/ImageDecode.cpp
+    Source/StandaloneIO.cpp
     Source/Presets.cpp
     Source/PluginEditor.cpp
     Source/ui/MadcapLookAndFeel.cpp

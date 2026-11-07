@@ -1,5 +1,6 @@
-// The picture behind the image sweeper: a 512 x 256 cover-fitted copy (shown on the
-// IMAGE tab and stored in the project as PNG), or one of the built-in posters.
+// The picture behind the image sweeper: the whole picture (never cropped), scaled down to
+// fit kMaxW x kMaxH with its own aspect ratio, stored in the project as PNG; or one of the
+// built-in posters. The analysis grid follows the picture's resolution (see lumaGridSize).
 #pragma once
 #include <juce_graphics/juce_graphics.h>
 
@@ -10,9 +11,11 @@
 namespace madcap {
 
 struct PictureData {
-    static constexpr int kW = 512, kH = 256;
-    juce::Image image;                   // kW x kH, software image
-    std::vector<float> luma;             // IMG_ROWS x IMG_COLS grid for the engine / analysis view
+    static constexpr int kMaxW = 1024, kMaxH = 512;
+    static constexpr int kPosterW = 512, kPosterH = 256;
+    juce::Image image;                   // the picture (software image), any size up to kMaxW x kMaxH
+    std::vector<float> luma;             // cols x rows grid for the engine / analysis / terrain views
+    int cols = 0, rows = 0;
     int poster = 0;                      // >= 0: built-in poster, -1: user picture
     juce::String name;
 };
@@ -20,15 +23,15 @@ struct PictureData {
 class ImageStore {
 public:
     void setPoster(int index);
-    // pixels: kW x kH 0xAABBGGRR (any thread)
-    void setPicture(const std::vector<uint32_t>& abgr, const juce::String& name);
+    // pixels: w x h 0xAABBGGRR (any thread)
+    void setPicture(const std::vector<uint32_t>& abgr, int w, int h, const juce::String& name);
     bool setFromPng(const juce::MemoryBlock& png, const juce::String& name);
 
     std::shared_ptr<const PictureData> get() const;
     int version() const noexcept { return version_.load(); }
     juce::MemoryBlock png() const;       // only for user pictures
 
-    static juce::String decodeFile(const juce::File& f, std::vector<uint32_t>& abgr);
+    static juce::String decodeFile(const juce::File& f, std::vector<uint32_t>& abgr, int& w, int& h);
     static juce::StringArray supportedExtensions();
 
 private:

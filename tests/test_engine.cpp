@@ -187,9 +187,11 @@ TEST_CASE("Image notes respond to intervals and the chord degree shifts the melo
     auto e = makeEngine(48000.0);
     // a single bright horizontal band on black
     auto g = std::make_unique<madcap::ImageGrid>();
-    g->luma.assign((size_t)IMG_ROWS * IMG_COLS, 0.0f);
+    g->cols = 300;   // a non-power-of-two picture size
+    g->rows = 128;
+    g->luma.assign((size_t)g->cols * (size_t)g->rows, 0.0f);
     for (int r = 60; r < 66; ++r)
-        for (int c = 0; c < IMG_COLS; ++c) g->luma[(size_t)r * IMG_COLS + c] = 1.0f;
+        for (int c = 0; c < g->cols; ++c) g->luma[(size_t)r * (size_t)g->cols + (size_t)c] = 1.0f;
     e->setImageNow(std::move(g));
     e->setTarget(P_SRC, 1.0f);
     e->setTarget(P_IMG_READ, 0.0f);   // listen to light
@@ -349,5 +351,42 @@ TEST_CASE("Host sync locks the arpeggiator to the bar", "[engine][sync]")
             lastTrig = trig;
         }
         ppq += 64.0 / spb;
+    }
+}
+
+TEST_CASE("Image grid follows the picture's resolution and aspect, any step count works", "[engine][image]")
+{
+    int c = 0, r = 0;
+    madcap::lumaGridSize(2000, 500, c, r);   // wide panorama: aspect kept, capped
+    CHECK(c == 512);
+    CHECK(r == 128);
+    madcap::lumaGridSize(100, 400, c, r);    // tall picture
+    CHECK(c == 64);
+    CHECK(r == 256);
+    madcap::lumaGridSize(300, 120, c, r);    // small picture: its own resolution
+    CHECK(c == 300);
+    CHECK(r == 120);
+    madcap::lumaGridSize(4, 4, c, r);        // tiny: clamped to the minimum
+    CHECK(c == IMG_COLS_MIN);
+    CHECK(r == IMG_ROWS_MIN);
+
+    auto e = makeEngine(48000.0);
+    auto g = std::make_unique<madcap::ImageGrid>();
+    g->cols = IMG_COLS_MIN;
+    g->rows = IMG_ROWS_MIN;
+    g->luma.assign((size_t)g->cols * (size_t)g->rows, 0.0f);
+    for (size_t i = 0; i < g->luma.size(); i += 3) g->luma[i] = 1.0f;
+    e->setImageNow(std::move(g));
+    e->setTarget(P_SRC, 1.0f);
+    e->setTarget(P_IMG_SWEEP, 1.0f);
+    for (int steps : {0, 1, 7, 33, 100, 128}) {
+        e->setTarget(P_IMG_GRID, (float)steps);
+        for (int mode = 0; mode < 3; ++mode) {
+            e->setTarget(P_IMG_MODE, (float)mode);
+            auto st = render(*e, 0.4, 97);
+            INFO("steps " << steps << " mode " << mode);
+            CHECK(st.finite);
+            CHECK(st.peak <= 1.0f);
+        }
     }
 }

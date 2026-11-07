@@ -336,7 +336,9 @@ void PlayButton::paint(juce::Graphics& g)
     g.fillRect(b);
     g.setColour(c);
     g.drawRect(b, on ? 2.0f : 1.5f);
-    auto icon = b.removeFromLeft(b.getHeight()).reduced(b.getHeight() * 0.3f);
+    // small icon on the left, the word fitted into the rest (never truncated)
+    const float is = juce::jmin(16.0f, b.getHeight() * 0.32f);
+    auto icon = juce::Rectangle<float>(is, is).withCentre({ b.getX() + 10.0f + is * 0.5f, b.getCentreY() });
     g.setColour(on && !waiting_ ? colours::bg : c);
     if (on) {
         juce::Path tri;
@@ -345,8 +347,9 @@ void PlayButton::paint(juce::Graphics& g)
     } else {
         g.fillRect(icon.reduced(1.0f));
     }
-    g.setFont(font(juce::jmin(20.0f, b.getHeight() * 0.42f), Weight::Bold, 0.1f));
-    g.drawText(on ? (waiting_ ? "HOST" : "PLAY") : "STOP", b.withTrimmedRight(6.0f), juce::Justification::centred);
+    auto textArea = b.withLeft(icon.getRight() + 6.0f).withTrimmedRight(6.0f);
+    g.setFont(font(juce::jmin(18.0f, b.getHeight() * 0.36f), Weight::Bold, 0.06f));
+    g.drawFittedText(on ? (waiting_ ? "HOST" : "PLAY") : "STOP", textArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     if (hasKeyboardFocus(true)) drawFocus(g, getLocalBounds().toFloat());
 }
 
@@ -358,6 +361,44 @@ bool PlayButton::keyPressed(const juce::KeyPress& k)
         setValueComplete(value_ > 0.5f ? 0.0f : 1.0f);
         return true;
     }
+    return false;
+}
+
+//==============================================================================
+SourceButton::SourceButton(MadcapProcessor& p, int which) : ParamWidget(p, P_SRC), which_(which)
+{
+    setTooltip(which == 0 ? "SAMPLE input on / off. Only one input plays at a time: turning SAMPLE on turns IMAGE off."
+                          : "IMAGE input on / off. Only one input plays at a time: turning IMAGE on turns SAMPLE off.");
+}
+
+void SourceButton::paint(juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat().reduced(1.0f);
+    const bool on = juce::roundToInt(value_) == which_;
+    g.setColour(on ? colours::green : colours::panel);
+    g.fillRect(b);
+    g.setColour(on ? colours::green : colours::blue.withAlpha(0.6f));
+    g.drawRect(b, on ? 2.0f : 1.0f);
+    drawLed(g, { b.getX() + 13.0f, b.getCentreY() }, 4.5f, on, on ? colours::bg : colours::green);
+    g.setColour(on ? colours::bg : colours::textDim);
+    g.setFont(font(juce::jmin(15.0f, b.getHeight() * 0.55f), Weight::Bold, 0.08f));
+    g.drawFittedText(juce::String(which_ == 0 ? "SAMPLE " : "IMAGE ") + (on ? "ON" : "OFF"),
+                     b.withTrimmedLeft(24.0f).withTrimmedRight(4.0f).toNearestInt(), juce::Justification::centred, 1, 0.7f);
+    if (hasKeyboardFocus(true)) drawFocus(g, getLocalBounds().toFloat());
+}
+
+void SourceButton::toggle()
+{
+    const bool on = juce::roundToInt(value_) == which_;
+    // one input at a time: switching this one off hands over to the other input
+    setValueComplete(on ? (float)(1 - which_) : (float)which_);
+}
+
+void SourceButton::mouseDown(const juce::MouseEvent&) { toggle(); }
+
+bool SourceButton::keyPressed(const juce::KeyPress& k)
+{
+    if (k.getKeyCode() == juce::KeyPress::returnKey || k.getKeyCode() == juce::KeyPress::spaceKey) { toggle(); return true; }
     return false;
 }
 

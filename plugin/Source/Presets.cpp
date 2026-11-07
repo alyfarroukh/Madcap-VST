@@ -51,11 +51,11 @@ const std::vector<FactoryPreset>& factoryPresets()
             {P_SRC, 0}, {P_ARP_ON, 1}, {P_ARP_MODE, 2}, {P_ARP_RATE, 3}, {P_ARP_OCT, 2}, {P_ARP_GATE, 0.4f},
             {P_ARP_SWING, 0.2f}, {P_ARP_WALK, 0.1f}, {P_ARP_START, 0.2f}, {P_CHORD, 8}, {P_ARP_GRAINS, 0.3f} } },
         { "Image Pent Melody", {
-            {P_SRC, 1}, {P_IMG_MODE, 1}, {P_IMG_SCALE, 0}, {P_IMG_KEY, 9}, {P_IMG_GRID, 3}, {P_IMG_SOURCE, 1},
+            {P_SRC, 1}, {P_IMG_MODE, 1}, {P_IMG_SCALE, 0}, {P_IMG_KEY, 9}, {P_IMG_GRID, 16}, {P_IMG_SOURCE, 1},
             {P_IMG_WAVE, 1}, {P_IMG_READ, 1}, {P_IMG_SWEEP, 8}, {P_IMG_DECAY, 0.6f}, {P_IMG_DRY, 0.9f},
             {P_GRAIN_LVL, 0.5f}, {P_CHORD, 0}, {P_REV_SIZE, 0.7f}, {P_REV_MIX, 0.45f} }, 1 },
         { "Height Sketch", {
-            {P_SRC, 1}, {P_IMG_MODE, 2}, {P_IMG_GRID, 5}, {P_IMG_WAVE, 0}, {P_IMG_VOICES, 4}, {P_IMG_DECAY, 0.4f},
+            {P_SRC, 1}, {P_IMG_MODE, 2}, {P_IMG_GRID, 32}, {P_IMG_WAVE, 0}, {P_IMG_VOICES, 4}, {P_IMG_DECAY, 0.4f},
             {P_IMG_READ, 1}, {P_IMG_SWEEP, 10}, {P_IMG_DRY, 1.0f}, {P_GRAIN_LVL, 0.4f}, {P_CHORD, 0},
             {P_DLY_DIV, 2}, {P_DLY_MIX, 0.3f} }, 2 },
         { "Spectral Noise Field", {
@@ -63,7 +63,7 @@ const std::vector<FactoryPreset>& factoryPresets()
             {P_IMG_SWEEP, 20}, {P_IMG_DRY, 1.0f}, {P_GRAIN_ON, 1}, {P_MODE, MODE_TUNNEL}, {P_GRAIN_LVL, 0.6f},
             {P_REV_SIZE, 0.92f}, {P_REV_MIX, 0.6f}, {P_CHORD, 0} }, 0 },
         { "Image Grain Cloud", {
-            {P_SRC, 1}, {P_IMG_MODE, 0}, {P_IMG_SOURCE, 2}, {P_IMG_GRID, 2}, {P_IMG_READ, 1}, {P_IMG_DRY, 0.3f},
+            {P_SRC, 1}, {P_IMG_MODE, 0}, {P_IMG_SOURCE, 2}, {P_IMG_GRID, 12}, {P_IMG_READ, 1}, {P_IMG_DRY, 0.3f},
             {P_MODE, MODE_CLOUD}, {P_SIZE, 260}, {P_DENSITY, 16}, {P_GRAIN_LVL, 1.0f}, {P_CHORD, 4},
             {P_REV_SIZE, 0.75f}, {P_REV_MIX, 0.5f} }, 3 },
     };

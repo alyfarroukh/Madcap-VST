@@ -48,8 +48,8 @@ bool Engine::prepare(double sampleRate)
     snapParams_ = true;
     if (currentSource_)
         gs_engine_swap_source(e_, currentSource_->samples.data(), (int)currentSource_->samples.size(), &currentSource_->slicer);
-    if (currentImage_ && currentImage_->luma.size() == (size_t)IMG_ROWS * IMG_COLS)
-        gs_img_set_grid(&e_->img, currentImage_->luma.data());
+    if (currentImage_ && currentImage_->valid())
+        gs_img_set_grid(&e_->img, currentImage_->luma.data(), currentImage_->cols, currentImage_->rows);
     return true;
 }
 
@@ -74,8 +74,8 @@ void Engine::setImageNow(std::unique_ptr<ImageGrid> img)
     delete pendingImage_.exchange(nullptr);
     ImageGrid* old = currentImage_;
     currentImage_ = img.release();
-    if (e_ && currentImage_ && currentImage_->luma.size() == (size_t)IMG_ROWS * IMG_COLS)
-        gs_img_set_grid(&e_->img, currentImage_->luma.data());
+    if (e_ && currentImage_ && currentImage_->valid())
+        gs_img_set_grid(&e_->img, currentImage_->luma.data(), currentImage_->cols, currentImage_->rows);
     delete old;
 }
 
@@ -92,7 +92,7 @@ void Engine::postSource(std::unique_ptr<SourceBuffer> src)
 
 void Engine::postImage(std::unique_ptr<ImageGrid> img)
 {
-    if (img && img->luma.size() != (size_t)IMG_ROWS * IMG_COLS) return;
+    if (img && !img->valid()) return;
     delete pendingImage_.exchange(img.release(), std::memory_order_acq_rel);
 }
 
@@ -116,7 +116,7 @@ void Engine::swapPending() noexcept
         if (ImageGrid* g = pendingImage_.exchange(nullptr, std::memory_order_acq_rel)) {
             ImageGrid* old = currentImage_;
             currentImage_ = g;
-            gs_img_set_grid(&e_->img, g->luma.data());
+            gs_img_set_grid(&e_->img, g->luma.data(), g->cols, g->rows);
             if (old) retiredImages_.push(old);
         }
     }

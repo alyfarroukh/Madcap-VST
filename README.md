@@ -112,8 +112,12 @@ level meter and the big **PLAY / STOP** transport button.
   new cut. Double-click selects the whole sample. **CROP** makes the cut permanent.
 * **LOAD:** WAV, AIFF, FLAC, MP3, OGG (or drop a file). Mixed to mono, resampled to the
   engine rate, up to 60 s. **DEMO** brings back the built-in sung "ahh" on C.
-* **REC / STOP** records from the sidechain input (in a DAW: enable Madcap's sidechain and
-  route a track to it) or from the microphone (Standalone). The take becomes the new sample.
+* **SAMPLE ON** (top left) makes the sample the live input. Only one input plays at a time,
+  so the IMAGE tab greys out (and vice versa). The SAMPLE / IMAGE switch is on both tabs.
+* **REC / STOP** records from the **RECORD INPUT**: in the Standalone app, pick the audio device
+  and the input channel your mic or guitar is plugged into (or open **Audio settings**). In a
+  DAW, enable Madcap's sidechain and route your mic / guitar track to it. Choose all inputs, input 1
+  or input 2, and watch the level meter. The take becomes the new sample.
 * **PLAY** auditions the cut dry (also while stopped), with **LOOP**.
 * **SLICES** 1 / 2 / 4 / 8 / 16, **GRID** (equal) or **HITS** (transients inside the cut).
   Tap or drag across the slice strip, or use SLICE / SPAN, to choose where the grains read.
@@ -124,15 +128,20 @@ level meter and the big **PLAY / STOP** transport button.
 ### 2 · IMAGE (image sweeper)
 * A scan line sweeps left to right across the picture and each column becomes sound.
   Click and hold the picture to grab and scrub the line.
+* **IMAGE ON** (top left) makes the image sweeper the live input (the SAMPLE tab greys out).
 * ◀ ▶ step through four built-in Bauhaus posters. **LOAD IMAGE** takes PNG, JPG, BMP or GIF
-  of any size (cover-fitted to 512 × 256).
+  of any size. The **whole picture** is used at its own aspect ratio, never cropped, and the
+  analysis grid follows its resolution (up to 512 × 256 cells).
+* **TERRAIN** turns the picture into a 3D wireframe landscape (brightness = height, or
+  darkness with LISTEN TO DARK) that rolls through the fixed scan line (orange front edge).
 * **SOUND SOURCE:** NOISE (band-passed noise), NOTES (PolyBLEP oscillators) or both.
 * **MODE:**
   * SPECTRAL: each band of rows is a scale note, so bright areas sound as chords.
   * BRIGHT: one voice that follows where the brightness sits.
   * HEIGHT: every edge the line crosses plays a note at its height.
 * **KEY / SCALE / LOW / RANGE** set the image's own scale. The resulting note count is shown.
-* **GRID:** SMOOTH (held, sliding tones) or 8–64 steps per sweep. **VOICES**, **WAVE**,
+* **STEPS:** 0 = smooth (held, sliding tones), or any number of steps per sweep from 1 to 128,
+  each a separate note. The step grid is drawn on the picture. **VOICES**, **WAVE**,
   **DECAY**, **SWEEP** time (1–60 s), **SYNC** (step = 16th note, locked to the host bar),
   **LISTEN TO** light or dark (posters default to DARK, photos to LIGHT), **LEVEL**, **DRY**.
 * Harmony applies: the PLAY-tab interval stacks companions on every image note, and the
@@ -158,8 +167,7 @@ width 0–150 %). Move a module with ◀ ▶: the order on screen is the order o
 available as the automatable **FX Order** parameter.
 
 ### 6 · PLAY
-The grain field XY pad (X = position, Y = spray), the **rear touch** pad (X = chord type,
-Y = voicing), KEY / SCALE / OCT, VOICING, MASTER (−40…+18 dB, followed by a look-ahead limiter
+The grain field XY pad (X = position, Y = spray), KEY / SCALE / OCT, VOICING, MASTER (−40…+18 dB, followed by a look-ahead limiter
 so it never clips), the interval strip, and seven chord pads I–VII. Click a pad to select it;
 Shift-click adds it to a cluster. Pads light up when MIDI selects them.
 

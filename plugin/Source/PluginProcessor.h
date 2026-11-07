@@ -65,6 +65,9 @@ public:
     bool isRecording() const noexcept { return recActive_.load(); }
     float recordingSeconds() const noexcept;
     float recordingPeak() const noexcept { return recPeak_.load(); }
+    float takeInputPeak() noexcept { return inPeak_.exchange(0.0f); }   // editor meter
+    int recordChannel() const noexcept { return recChannel_.load(); }   // 0 = all, 1 = in 1, 2 = in 2
+    void setRecordChannel(int c) noexcept { recChannel_.store(juce::jlimit(0, 2, c)); }
     bool hasRecordInput() const noexcept { return getTotalNumInputChannels() > 0; }
 
     void tapTempo();
@@ -118,6 +121,8 @@ private:
     std::atomic<bool> recWriting_{false};
     std::atomic<int> recLen_{0};
     std::atomic<float> recPeak_{0.0f};
+    std::atomic<float> inPeak_{0.0f};
+    std::atomic<int> recChannel_{0};
     double recRate_ = 48000.0;
     bool recWasActive_ = false;          // message thread
 

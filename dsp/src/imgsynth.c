@@ -17,7 +17,6 @@ static const int IMG_SCALES[GS_IMG_NUM_SCALES][12] = {
     {0, 2, 3, 7, 8, -1},
     {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
 };
-const int GS_IMG_GRID_STEPS[8] = {0, 8, 12, 16, 24, 32, 48, 64};
 
 #define CHUNK 32
 #define GATE 0.06f
@@ -80,15 +79,18 @@ static float band_level(GsImgSynth *s, int r0, int r1, int c0, int c1, int dark)
     return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
-static void cols_for(double phase, int steps, int *c0, int *c1)
+static void cols_for(const GsImgSynth *s, double phase, int steps, int *c0, int *c1)
 {
+    const int C = s->cols;
     if (steps <= 0) {
-        int c = (int)(phase * IMG_COLS); if (c >= IMG_COLS) c = IMG_COLS - 1;
+        int c = (int)(phase * C); if (c >= C) c = C - 1;
         *c0 = c; *c1 = c + 1;
     } else {
         int st = (int)(phase * steps); if (st >= steps) st = steps - 1;
-        *c0 = st * IMG_COLS / steps; *c1 = (st + 1) * IMG_COLS / steps;
+        *c0 = st * C / steps; *c1 = (st + 1) * C / steps;
+        if (*c0 >= C) *c0 = C - 1;
         if (*c1 <= *c0) *c1 = *c0 + 1;
+        if (*c1 > C) *c1 = C;
     }
 }
 
@@ -151,26 +153,27 @@ static void apply_want(GsImgSynth *s, const float *want, int steps, int new_step
 static void spectral_update(GsImgSynth *s, const float *p, int steps, int new_step, float step_samples, int sr)
 {
     int N = s->nnotes, V = ip(p, P_IMG_VOICES), dark = ip(p, P_IMG_READ);
-    int c0, c1; cols_for(s->phase, steps, &c0, &c1);
+    int c0, c1; cols_for(s, s->phase, steps, &c0, &c1);
     float lvl[IMG_MAX_NOTES];
     if (ip(p, P_IMG_MODE) == 2) {
         /* HEIGHT: every edge / object the line crosses plays a note at its height
          * (top of the picture = high note, bottom = low note), whatever its brightness */
-        float prof[IMG_ROWS], e[IMG_ROWS];
-        for (int r = 0; r < IMG_ROWS; r++) {
+        const int RR = s->rows;
+        float prof[IMG_ROWS_MAX], e[IMG_ROWS_MAX];
+        for (int r = 0; r < RR; r++) {
             float sum = 0;
             for (int c = c0; c < c1; c++) sum += s->grid[r][c];
             prof[r] = sum / (c1 - c0);
         }
-        for (int r = 0; r < IMG_ROWS; r++) {
-            float up = prof[r > 0 ? r - 1 : 0], dn = prof[r < IMG_ROWS - 1 ? r + 1 : IMG_ROWS - 1];
+        for (int r = 0; r < RR; r++) {
+            float up = prof[r > 0 ? r - 1 : 0], dn = prof[r < RR - 1 ? r + 1 : RR - 1];
             e[r] = fabsf(dn - up) * 3.0f;
         }
         for (int b = 0; b < N; b++) lvl[b] = 0;
-        for (int r = 2; r < IMG_ROWS - 2; r++) {
+        for (int r = 2; r < RR - 2; r++) {
             float v = e[r];
             if (v < 0.12f || v < e[r - 1] || v < e[r + 1] || v < e[r - 2] || v < e[r + 2]) continue;   /* local peaks only */
-            int b = (int)lroundf((1.0f - (r + 0.5f) / IMG_ROWS) * (N - 1));
+            int b = (int)lroundf((1.0f - (r + 0.5f) / RR) * (N - 1));
             if (b < 0) b = 0;
             if (b >= N) b = N - 1;
             if (v > 1) v = 1;
@@ -178,7 +181,8 @@ static void spectral_update(GsImgSynth *s, const float *p, int steps, int new_st
         }
     } else {
         for (int b = 0; b < N; b++) {
-            int r1 = IMG_ROWS - b * IMG_ROWS / N, r0 = IMG_ROWS - (b + 1) * IMG_ROWS / N;
+            const int RR = s->rows;
+            int r1 = RR - b * RR / N, r0 = RR - (b + 1) * RR / N;
             if (r1 <= r0) r1 = r0 + 1;
             lvl[b] = band_level(s, r0, r1, c0, c1, dark);
         }
@@ -214,9 +218,9 @@ static void spectral_update(GsImgSynth *s, const float *p, int steps, int new_st
 static void brightness_update(GsImgSynth *s, const float *p, int steps, int new_step, float step_samples, int sr)
 {
     int N = s->nnotes, dark = ip(p, P_IMG_READ);
-    int c0, c1; cols_for(s->phase, steps, &c0, &c1);
+    int c0, c1; cols_for(s, s->phase, steps, &c0, &c1);
     float wsum = 0, ysum = 0, peak = 0;
-    for (int r = 0; r < IMG_ROWS; r++) {
+    for (int r = 0; r < s->rows; r++) {
         float sum = 0;
         for (int c = c0; c < c1; c++) sum += s->grid[r][c];
         float v = sum / (c1 - c0);
@@ -224,7 +228,7 @@ static void brightness_update(GsImgSynth *s, const float *p, int steps, int new_
         v = (v - GATE) / (1.0f - GATE);
         if (v <= 0) continue;
         v = v * v;                                   /* favour the brightest rows */
-        float y = 1.0f - (r + 0.5f) / IMG_ROWS;      /* 0 bottom .. 1 top */
+        float y = 1.0f - (r + 0.5f) / s->rows;       /* 0 bottom .. 1 top */
         wsum += v; ysum += v * y;
         if (v > peak) peak = v;
     }
@@ -331,9 +335,14 @@ static void render_voice(GsImgSynth *s, GsImgVoice *v, float *L, float *R, int n
     }
 }
 
-void gs_img_set_grid(GsImgSynth *s, const float *grid)
+void gs_img_set_grid(GsImgSynth *s, const float *grid, int cols, int rows)
 {
-    memcpy(s->grid, grid, sizeof(s->grid));
+    if (!grid || cols < 1 || rows < 1) return;
+    if (cols > IMG_COLS_MAX) cols = IMG_COLS_MAX;
+    if (rows > IMG_ROWS_MAX) rows = IMG_ROWS_MAX;
+    for (int r = 0; r < rows; r++) memcpy(s->grid[r], grid + (size_t)r * cols, sizeof(float) * cols);
+    s->cols = cols;
+    s->rows = rows;
     s->has_image = 1;
     s->last_step = -1;
     s->ctl_left = 0;
@@ -341,7 +350,7 @@ void gs_img_set_grid(GsImgSynth *s, const float *grid)
 
 int gs_img_sync_steps(const float *p)
 {
-    int steps = GS_IMG_GRID_STEPS[ip(p, P_IMG_GRID)];
+    int steps = ip(p, P_IMG_GRID);
     return steps > 0 ? steps : 16;
 }
 
@@ -360,7 +369,7 @@ int gs_img_active_notes(const GsImgSynth *s, int *out, int max)
 
 void gs_img_process(GsImgSynth *s, const float *p, float *L, float *R, int n, int sr)
 {
-    if (!s->has_image) return;
+    if (!s->has_image || s->cols < 1 || s->rows < 1) return;
     s->rel_mul = powf(0.9985f, 48000.0f / (float)sr);
 
     /* notes for the current key / scale / range (rebuild if changed) */
@@ -378,7 +387,8 @@ void gs_img_process(GsImgSynth *s, const float *p, float *L, float *R, int n, in
         s->nnext = Ne;
     }
 
-    int steps = GS_IMG_GRID_STEPS[ip(p, P_IMG_GRID)];
+    int steps = ip(p, P_IMG_GRID);
+    if (steps < 0) steps = 0;
     float sweep = p[P_IMG_SWEEP];
     if (ip(p, P_IMG_SYNC)) sweep = (steps > 0 ? steps : 16) * 15.0f / p[P_BPM];   /* one step = one 16th note */
     if (sweep < 0.25f) sweep = 0.25f;
