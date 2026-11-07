@@ -16,6 +16,30 @@ TopBar::TopBar(MadcapProcessor& p, std::function<void(int)> onTab)
     }
     for (auto* b : {&prev_, &next_, &presetName_, &save_, &undo_, &redo_, &rnd_}) addAndMakeVisible(*b);
     addAndMakeVisible(play_);
+    addAndMakeVisible(recOut_);
+    recOut_.fontSize = 12.0f;
+    recOut_.setTooltip("REC OUT: record what you hear to a WAV file (stereo, 24-bit) in "
+                       + MadcapProcessor::recordingsFolder().getFullPathName()
+                       + ". Click to start, click again to stop. Right-click: open the folder.");
+    recOut_.onClick = [this] {
+        if (proc_.isRecordingOut()) proc_.stopRecordingOut();
+        else proc_.startRecordingOut();
+    };
+    recOut_.onMenu = [this] {
+        juce::PopupMenu m;
+        const auto last = proc_.lastRecordingOut();
+        m.addItem(1, "Open recordings folder");
+        m.addItem(2, "Show last recording", last.existsAsFile());
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&recOut_), [last](int r) {
+            if (r == 1) {
+                auto dir = MadcapProcessor::recordingsFolder();
+                dir.createDirectory();
+                dir.startAsProcess();
+            } else if (r == 2 && last.existsAsFile()) {
+                last.revealToUser();
+            }
+        });
+    };
     addAndMakeVisible(meter_);
     addAndMakeVisible(inLed_);
     prev_.setTooltip("Previous factory preset");
@@ -39,9 +63,10 @@ void TopBar::resized()
 {
     for (int i = 0; i < 6; ++i) tabs_[(size_t)i]->setBounds(116 + i * 68, 6, 64, 30);
     prev_.setBounds(530, 6, 24, 30);
-    presetName_.setBounds(556, 6, 200, 30);
-    next_.setBounds(758, 6, 24, 30);
-    save_.setBounds(786, 6, 54, 30);
+    presetName_.setBounds(556, 6, 144, 30);
+    next_.setBounds(702, 6, 24, 30);
+    save_.setBounds(730, 6, 50, 30);
+    recOut_.setBounds(784, 6, 60, 30);
     undo_.setBounds(530, 42, 52, 18);
     redo_.setBounds(586, 42, 52, 18);
     rnd_.setBounds(642, 42, 56, 18);
@@ -106,6 +131,14 @@ void TopBar::tick()
     if (s != shownStatus_) { shownStatus_ = s; repaint(0, 40, 525, 22); }
     const auto name = proc_.currentPresetName();
     if (presetName_.getButtonText() != name) presetName_.setButtonText(name);
+    const bool rec = proc_.isRecordingOut();
+    recOut_.setFilled(rec);
+    juce::String recText = "Rec out";
+    if (rec) {
+        const int secs = (int)proc_.recordingOutSeconds();
+        recText = juce::String::formatted("%d:%02d", secs / 60, secs % 60);
+    }
+    if (recOut_.getButtonText() != recText) recOut_.setButtonText(recText);
     undo_.setEnabled(proc_.undoManager().canUndo());
     redo_.setEnabled(proc_.undoManager().canRedo());
 }

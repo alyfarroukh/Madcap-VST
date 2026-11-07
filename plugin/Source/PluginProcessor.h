@@ -73,6 +73,14 @@ public:
     unsigned inputSignalTicks() const noexcept { return signalTicks_.load(); }
     bool hasRecordInput() const noexcept { return getTotalNumInputChannels() > 0; }
 
+    // REC OUT: record what you hear (after MASTER + limiter) to a stereo 24-bit WAV.
+    bool startRecordingOut();
+    void stopRecordingOut();
+    bool isRecordingOut() const noexcept { return outActive_.load(); }
+    double recordingOutSeconds() const noexcept;
+    juce::File lastRecordingOut() const { return lastOutFile_; }
+    static juce::File recordingsFolder();
+
     void tapTempo();
     void randomize();
     std::array<bool, PAGE_COUNT>& randomLocks() noexcept { return locks_; }
@@ -128,7 +136,17 @@ private:
     std::atomic<int> recChannel_{0};
     std::array<std::atomic<int>, 2> inBusChannels_{};   // channels the host connected: 0 = main input, 1 = sidechain
     std::atomic<unsigned> signalTicks_{0};
-    std::atomic<bool> gridJobPending_{false};              // counts blocks with input above -60 dBFS
+    std::atomic<bool> gridJobPending_{false};
+
+    // REC OUT (the audio thread only pushes into the ThreadedWriter's lock-free FIFO)
+    juce::TimeSliceThread outThread_{ "Madcap REC OUT" };
+    std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> outWriter_;    // owned by the message thread
+    std::atomic<juce::AudioFormatWriter::ThreadedWriter*> outWriterRT_{nullptr};
+    std::atomic<bool> outWriting_{false}, outActive_{false};
+    std::atomic<juce::int64> outFrames_{0};
+    std::atomic<int> outDropped_{0};
+    double outRate_ = 48000.0;
+    juce::File outFile_, lastOutFile_;              // counts blocks with input above -60 dBFS
     double recRate_ = 48000.0;
     bool recWasActive_ = false;          // message thread
 

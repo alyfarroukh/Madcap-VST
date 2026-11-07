@@ -4,6 +4,18 @@
 
 namespace madcap::ui {
 
+// REC OUT: left click starts / stops recording Madcap's output to WAV, right click = folder menu.
+class RecOutButton : public HudButton {
+public:
+    RecOutButton() : HudButton("Rec out", colours::red) {}
+    std::function<void()> onMenu;
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) { if (onMenu) onMenu(); return; }
+        HudButton::mouseDown(e);
+    }
+};
+
 // Tabs, input / BPM status, presets, undo / redo / randomize, PLAY / STOP and the level meter.
 class TopBar : public juce::Component, public Tickable {
 public:
@@ -27,6 +39,7 @@ private:
     HudButton prev_{"<"}, next_{">"}, presetName_{"Init"}, save_{"Save"};
     HudButton undo_{"Undo"}, redo_{"Redo"}, rnd_{"Rnd", colours::amber};
     PlayButton play_;
+    RecOutButton recOut_;
     LevelMeter meter_;
     SignalLed inLed_;
     juce::String message_, shownStatus_;

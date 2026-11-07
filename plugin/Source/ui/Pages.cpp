@@ -716,6 +716,7 @@ public:
     explicit PlayPage(MadcapProcessor& p)
         : Page(p, PAGE_PLAY, "Play"),
           field_(add<GrainField>(p, true)),
+          dry_(knob(P_DRY_LVL, colours::green)), wet_(knob(P_WET_LVL)),
           key_(stepper(P_KEY, {}, true)), oct_(stepper(P_OCTAVE)), scale_(stepper(P_SCALE, {}, true)),
           voicing_(knob(P_VOICING)), master_(knob(P_MASTER, colours::orange)),
           interval_(seg(P_CHORD)), pads_(add<ChordPads>(p)),
@@ -730,11 +731,16 @@ public:
         vel_.setLabel("Velocity");
         mod_.setLabel("Mod wheel");
         master_.setTooltip("Master level (-40..+18 dB), followed by a look-ahead limiter so it never clips");
+        dry_.setTooltip("DRY: the plain input mixed in, with no grains, arp or FX: the sample's cut looping at "
+                        "its own pitch (SAMPLE input) or the plain sweeper (IMAGE input)");
+        wet_.setTooltip("WET: the level of everything Madcap generates: grains, arp and the FX chain");
     }
 
     void layout() override
     {
-        field_.setBounds(0, 0, 712, 214);
+        field_.setBounds(0, 0, 600, 214);
+        dry_.setBounds(612, 0, 100, 104);
+        wet_.setBounds(612, 110, 100, 104);
         key_.setBounds(724, 0, 96, 40);
         oct_.setBounds(832, 0, 96, 40);
         scale_.setBounds(724, 50, 204, 40);
@@ -756,6 +762,7 @@ public:
 
 private:
     GrainField& field_;
+    RingKnob &dry_, &wet_;
     Stepper &key_, &oct_, &scale_;
     RingKnob &voicing_, &master_;
     SegmentSwitch& interval_;

@@ -53,6 +53,8 @@ typedef struct {
     float bend_semis;             /* pitch bend, semitones */
     int preview_on, preview_loop; /* audition the cut section dry */
     double preview_pos;
+    double dry_pos;               /* PLAY-tab DRY: plain playback position in the region */
+    float dry_env;                /* gate envelope of the dry signal */
 
     /* host sync (set by gs_engine_set_host before each process call) */
     int host_playing;
@@ -99,6 +101,7 @@ typedef struct {
 
     /* scratch */
     float bus_l[GS_BLOCK_MAX], bus_r[GS_BLOCK_MAX];
+    float dry_l[GS_BLOCK_MAX], dry_r[GS_BLOCK_MAX];   /* the plain input for the PLAY-tab DRY knob */
 
     /* meters / visualisation (copied out by the wrapper) */
     float peak_l, peak_r, comp_gr, ui_playhead;

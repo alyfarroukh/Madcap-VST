@@ -57,6 +57,8 @@ enum {
     P_TEMPO_SRC,      /* 0 host, 1 manual (BPM parameter) */
     P_PREVIEW_LOOP,
     P_IMG_RES,        /* image analysis grid: max columns 64 .. 2048 */
+    P_DRY_LVL,        /* PLAY tab: the plain input (no grains / arp / FX), mixed before the master */
+    P_WET_LVL,        /* PLAY tab: everything Madcap generates (grains, arp, FX) */
     P_COUNT
 };
 

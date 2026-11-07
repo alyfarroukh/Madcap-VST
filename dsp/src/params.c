@@ -179,6 +179,8 @@ const GsParamDesc GS_PARAMS[P_COUNT] = {
     [P_TEMPO_SRC]   = D("tempo_source","Tempo Source", PAGE_GLOBAL, 0, 1, 0, FMT_ENUM, TEMPO_SRC_LABELS),
     [P_PREVIEW_LOOP]= D("preview_loop","Audition Loop",PAGE_SAMPLE, 0, 1, 0, FMT_ENUM, ONOFF),
     [P_IMG_RES]     = D("img_res",     "Grid Resolution", PAGE_IMAGE, 0, 5, 3, FMT_ENUM, IMG_RES_LABELS),
+    [P_DRY_LVL]     = C("dry",         "Dry",          PAGE_PLAY, 0, 1.5f, 0, FMT_PCT, 1),
+    [P_WET_LVL]     = C("wet",         "Wet",          PAGE_PLAY, 0, 1.5f, 1, FMT_PCT, 1),
 };
 
 const char *const GS_PARAM_SHORT[P_COUNT] = {
@@ -205,7 +207,7 @@ const char *const GS_PARAM_SHORT[P_COUNT] = {
     [P_GRAIN_HOLD] = "HOLD", [P_GRAIN_INTERP] = "INTERP", [P_IMG_HOLD] = "HOLD", [P_DRV_OS] = "OS",
     [P_DEG1] = "I", [P_DEG2] = "II", [P_DEG3] = "III", [P_DEG4] = "IV", [P_DEG5] = "V", [P_DEG6] = "VI", [P_DEG7] = "VII",
     [P_MIDI_MODE] = "MIDI", [P_LATCH] = "LATCH", [P_VEL_AMT] = "VELOCITY", [P_MOD_DEST] = "MOD WHEEL",
-    [P_PLAY] = "PLAY", [P_FOLLOW_HOST] = "FOLLOW HOST", [P_TEMPO_SRC] = "TEMPO", [P_PREVIEW_LOOP] = "LOOP", [P_IMG_RES] = "GRID RES",
+    [P_PLAY] = "PLAY", [P_FOLLOW_HOST] = "FOLLOW HOST", [P_TEMPO_SRC] = "TEMPO", [P_PREVIEW_LOOP] = "LOOP", [P_IMG_RES] = "GRID RES", [P_DRY_LVL] = "DRY", [P_WET_LVL] = "WET",
 };
 
 int gs_mod_dest_param(int dest)

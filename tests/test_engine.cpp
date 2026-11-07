@@ -425,3 +425,58 @@ TEST_CASE("A 2048 x 1024 grid sweeps in real time and stays in bounds", "[engine
         }
     }
 }
+
+TEST_CASE("PLAY tab DRY plays the plain input, WET scales everything generated", "[engine][mix]")
+{
+    SECTION("DRY alone (grains + arp off) is the sample, unprocessed")
+    {
+        auto e = makeEngine(48000.0);
+        e->setTarget(P_GRAIN_ON, 0.0f);
+        e->setTarget(P_ARP_ON, 0.0f);
+        e->setTarget(P_DRY_LVL, 1.0f);
+        auto st = render(*e, 1.0, 256);
+        CHECK(st.finite);
+        CHECK(st.peak <= 1.0f);
+        CHECK(st.rms > 1e-2);
+    }
+    SECTION("WET 0 + DRY 0 = silence")
+    {
+        auto e = makeEngine(48000.0);
+        e->setTarget(P_WET_LVL, 0.0f);
+        e->setTarget(P_DRY_LVL, 0.0f);
+        render(*e, 0.4, 256);   // let the parameter smoothing settle
+        CHECK(render(*e, 1.0, 256).peak < 1e-6f);
+    }
+    SECTION("WET 0 + DRY: no reverb or delay on the dry signal")
+    {
+        auto e = makeEngine(48000.0);
+        e->setTarget(P_WET_LVL, 0.0f);
+        e->setTarget(P_DRY_LVL, 1.0f);
+        e->setTarget(P_REV_SIZE, 1.0f);
+        e->setTarget(P_REV_MIX, 1.0f);
+        CHECK(render(*e, 1.0, 256).rms > 1e-2);
+        e->setTarget(P_DRY_LVL, 0.0f);
+        render(*e, 0.4, 256);                       // parameter smoothing settles (15 ms time constant)
+        CHECK(render(*e, 0.5, 256).peak < 1e-6f);   // nothing rings on: the dry path skipped the FX
+    }
+    SECTION("DRY with IMAGE input is the plain sweeper")
+    {
+        auto e = makeEngine(48000.0);
+        e->setTarget(P_SRC, 1.0f);
+        e->setTarget(P_IMG_SWEEP, 1.0f);
+        e->setTarget(P_WET_LVL, 0.0f);
+        e->setTarget(P_DRY_LVL, 1.0f);
+        CHECK(render(*e, 1.5, 256).rms > 1e-3);
+    }
+    SECTION("DRY follows the MIDI gate (latch off)")
+    {
+        auto e = makeEngine(48000.0);
+        e->setTarget(P_LATCH, 0.0f);
+        e->setTarget(P_GRAIN_ON, 0.0f);
+        e->setTarget(P_DRY_LVL, 1.0f);
+        render(*e, 0.3, 256);
+        CHECK(render(*e, 0.5, 256).peak < 1e-4f);
+        e->noteOn(60, 1.0f);
+        CHECK(render(*e, 0.5, 256).rms > 1e-2);
+    }
+}

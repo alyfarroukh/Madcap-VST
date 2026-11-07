@@ -92,6 +92,10 @@ level meter and the big **PLAY / STOP** transport button.
   With *Follow host transport* on (SAMPLE tab), stopping the host stops Madcap too.
 * **Undo / redo:** Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (or Ctrl+Y). Ctrl/Cmd+1…6 switches tabs.
 * Drop an audio file or a picture anywhere on the window to load it.
+* **REC OUT** (top bar) records what you hear, after MASTER and the limiter, to a stereo 24-bit
+  WAV at the session's sample rate. Click to start (the button shows the elapsed time), click
+  again to stop. Files go to `Music/Madcap Recordings` (Windows: `%USERPROFILE%\Music\Madcap Recordings`,
+  macOS: `~/Music/Madcap Recordings`). Right-click REC OUT to open the folder.
 * Knobs: drag (Shift = fine), mouse wheel, double-click resets, arrow keys when focused.
   The value appears in a bubble while you touch a knob; hover for a tooltip.
 * The window is resizable (75–200 %) and stays sharp at any size.
@@ -169,7 +173,9 @@ width 0–150 %). Move a module with ◀ ▶: the order on screen is the order o
 available as the automatable **FX Order** parameter.
 
 ### 6 · PLAY
-The grain field XY pad (X = position, Y = spray), KEY / SCALE / OCT, VOICING, MASTER (−40…+18 dB, followed by a look-ahead limiter
+The grain field XY pad (X = position, Y = spray), **DRY** (the plain input mixed in with no
+grains, arp or FX: the sample's cut looping at its own pitch, or the plain sweeper with IMAGE
+input) and **WET** (the level of everything Madcap generates), KEY / SCALE / OCT, VOICING, MASTER (−40…+18 dB, followed by a look-ahead limiter
 so it never clips), the interval strip, and seven chord pads I–VII. Click a pad to select it;
 Shift-click adds it to a cluster. Pads light up when MIDI selects them.
 

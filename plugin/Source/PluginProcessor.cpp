@@ -41,6 +41,7 @@ MadcapProcessor::MadcapProcessor()
 MadcapProcessor::~MadcapProcessor()
 {
     stopTimer();
+    stopRecordingOut();
     recActive_ = false;
     loader_.removeAllJobs(true, 10000);
 }
@@ -48,6 +49,7 @@ MadcapProcessor::~MadcapProcessor()
 //==============================================================================
 void MadcapProcessor::prepareToPlay(double sampleRate, int)
 {
+    if (outActive_.load()) stopRecordingOut();   // the file's sample rate can't change mid-take
     const juce::ScopedLock pl(prepareLock_);
     if (recActive_.load()) recActive_ = false;
     if (sampleRate <= 0) sampleRate = 44100.0;
@@ -217,6 +219,14 @@ void MadcapProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
             if (h.ppq >= 0.0 && spb > 0.0) h.ppq += pos / spb;
             engine_.setHost(h);
             engine_.process(l, r, c);
+            // REC OUT: hand the output to the background writer (lock-free FIFO, never blocks)
+            outWriting_.store(true, std::memory_order_seq_cst);
+            if (auto* w = outWriterRT_.load(std::memory_order_seq_cst)) {
+                const float* chans[2] = { l, r };
+                if (w->write(chans, c)) outFrames_.fetch_add(c, std::memory_order_relaxed);
+                else outDropped_.fetch_add(1, std::memory_order_relaxed);
+            }
+            outWriting_.store(false, std::memory_order_seq_cst);
             if (outCh >= 2) {
                 out.copyFrom(0, pos, l, c);
                 out.copyFrom(1, pos, r, c);
@@ -405,6 +415,58 @@ void MadcapProcessor::stopRecording()
     });
 }
 
+juce::File MadcapProcessor::recordingsFolder()
+{
+    return juce::File::getSpecialLocation(juce::File::userMusicDirectory).getChildFile("Madcap Recordings");
+}
+
+bool MadcapProcessor::startRecordingOut()
+{
+    if (outActive_.load()) return true;
+    const double sr = currentRate_.load();
+    if (sr <= 0) { setStatus("Audio is not running"); return false; }
+    auto folder = recordingsFolder();
+    if (!folder.createDirectory()) { setStatus("Cannot create " + folder.getFullPathName()); return false; }
+    auto file = folder.getNonexistentChildFile("Madcap " + juce::Time::getCurrentTime().formatted("%Y-%m-%d %H-%M-%S"), ".wav", false);
+    std::unique_ptr<juce::OutputStream> stream(file.createOutputStream().release());
+    if (!stream) { setStatus("Cannot write " + file.getFullPathName()); return false; }
+    juce::WavAudioFormat wav;
+    auto writer = wav.createWriterFor(stream, juce::AudioFormatWriterOptions{}
+                                                  .withSampleRate(sr)
+                                                  .withNumChannels(2)
+                                                  .withBitsPerSample(24));
+    if (!writer) { setStatus("Cannot create a WAV writer at " + juce::String(sr) + " Hz"); file.deleteFile(); return false; }
+    if (!outThread_.isThreadRunning()) outThread_.startThread();
+    outWriter_ = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>(writer.release(), outThread_,
+                                                                           juce::jmax(65536, (int)(sr * 4)));
+    outFile_ = file;
+    outRate_ = sr;
+    outFrames_ = 0;
+    outDropped_ = 0;
+    outActive_ = true;
+    outWriterRT_.store(outWriter_.get(), std::memory_order_seq_cst);
+    setStatus("REC OUT: recording to " + file.getFileName());
+    return true;
+}
+
+void MadcapProcessor::stopRecordingOut()
+{
+    if (!outActive_.exchange(false)) return;
+    outWriterRT_.store(nullptr, std::memory_order_seq_cst);
+    for (int i = 0; i < 500 && outWriting_.load(std::memory_order_seq_cst); ++i) juce::Thread::sleep(1);
+    outWriter_.reset();   // flushes the FIFO and closes the file
+    lastOutFile_ = outFile_;
+    const auto secs = (double)outFrames_.load() / outRate_;
+    juce::String msg = "Saved " + outFile_.getFileName() + " (" + juce::String(secs, 1) + " s) to " + recordingsFolder().getFullPathName();
+    if (outDropped_.load() > 0) msg << "  -  warning: the disk was too slow, some audio was dropped";
+    setStatus(msg);
+}
+
+double MadcapProcessor::recordingOutSeconds() const noexcept
+{
+    return outRate_ > 0 ? (double)outFrames_.load() / outRate_ : 0.0;
+}
+
 float MadcapProcessor::recordingSeconds() const noexcept
 {
     return recRate_ > 0 ? (float)recLen_.load() / (float)recRate_ : 0.0f;
@@ -435,7 +497,7 @@ void MadcapProcessor::randomize()
         switch (p) {
             case P_SRC: case P_TRIM_IN: case P_TRIM_OUT: case P_MASTER: case P_SAMPLE_ROOT: case P_KEY:
             case P_IMG_KEY: case P_MIDI_MODE: case P_LATCH: case P_VEL_AMT: case P_MOD_DEST: case P_PREVIEW_LOOP:
-            case P_GRAIN_ON: case P_ARP_ON: case P_GRAIN_HOLD: case P_IMG_HOLD: case P_OCTAVE: case P_IMG_RES:
+            case P_GRAIN_ON: case P_ARP_ON: case P_GRAIN_HOLD: case P_IMG_HOLD: case P_OCTAVE: case P_IMG_RES: case P_DRY_LVL: case P_WET_LVL:
             case P_DEG1: case P_DEG2: case P_DEG3: case P_DEG4: case P_DEG5: case P_DEG6: case P_DEG7:
                 continue;
             default: break;

@@ -409,10 +409,41 @@ static void preview(GsEngine *e, float *L, float *R, int n)
     e->ui_preview_pos = e->preview_on ? (float)(p / e->src_len) : -1;
 }
 
+/* PLAY-tab DRY, SAMPLE input: the region (cut / selected slices) looped at its own pitch,
+ * with short fades at the loop points; follows the MIDI gate like everything else. */
+static void dry_sample(GsEngine *e, float *L, float *R, int n)
+{
+    const int rs = e->region_s, re = e->region_e, len = re - rs;
+    if (!e->src || len < 256 || rs < 0 || re > e->src_len) return;
+    float fade = 0.005f * e->sr;
+    if (fade > len * 0.25f) fade = len * 0.25f;
+    const float inv = 1.0f / fade;
+    const float gk = 1.0f - expf(-1.0f / ((e->gate ? 0.005f : 0.08f) * e->sr));
+    const float gt = e->gate ? 1.0f : 0.0f;
+    double p = e->dry_pos;
+    if (p < rs || p >= re) p = rs;
+    for (int i = 0; i < n; i++) {
+        e->dry_env += (gt - e->dry_env) * gk;
+        const int ix = (int)p;
+        float w = 1.0f;
+        const float d0 = (float)(p - rs), d1 = (float)(re - 1 - p);
+        if (d0 < fade) w = d0 * inv;
+        if (d1 < fade && d1 * inv < w) w = d1 * inv;
+        const float s = e->src[ix] * w * e->dry_env;
+        L[i] += s;
+        R[i] += s;
+        p += 1.0;
+        if (p >= re) p = rs;
+    }
+    e->dry_pos = p;
+}
+
 static void transport_stop_now(GsEngine *e)
 {
     e->ngrains = 0;
     e->spawn_t = 0;
+    e->dry_pos = 0;
+    e->dry_env = 0;
     gs_img_stop(&e->img);
     gs_arp_reset(&e->arp);
     gs_fx_clear(&e->dly, &e->rev);
@@ -506,6 +537,8 @@ static void process_block(GsEngine *e, float *outL, float *outR, int n)
     float *L = e->bus_l, *R = e->bus_r;
     memset(L, 0, sizeof(float) * n);
     memset(R, 0, sizeof(float) * n);
+    memset(e->dry_l, 0, sizeof(float) * n);
+    memset(e->dry_r, 0, sizeof(float) * n);
 
     /* transport: STOP cuts everything (grains, arp, FX tails) after a short fade */
     int want = e->playing;
@@ -564,6 +597,8 @@ static void process_block(GsEngine *e, float *outL, float *outR, int n)
             e->gate_env += (gt - e->gate_env) * gk;
             il[i] *= e->gate_env; ir[i] *= e->gate_env;
         }
+        memcpy(e->dry_l, il, sizeof(float) * n);   /* PLAY-tab DRY: the plain sweeper */
+        memcpy(e->dry_r, ir, sizeof(float) * n);
         int frozen = ip(e, P_IMG_HOLD);
         if (!frozen) {
             int bin_len = e->live_len / GS_LIVE_ENV;
@@ -620,11 +655,21 @@ static void process_block(GsEngine *e, float *outL, float *outR, int n)
                            (float)t + 12.0f * ip(e, P_OCTAVE), e->gate, bend, L, R, n, e->sr);
         }
         tone_filter(e, L, R, n);
+        if (e->p[P_DRY_LVL] > 0.0005f) dry_sample(e, e->dry_l, e->dry_r, n);
     } else {
         e->ngrains = 0;
     }
 
     fx_chain(e, L, R, n);
+
+    /* PLAY tab: WET = everything generated (grains, arp, FX), DRY = the plain input, no FX */
+    {
+        const float wet = e->p[P_WET_LVL], dry = e->p[P_DRY_LVL];
+        for (int i = 0; i < n; i++) {
+            L[i] = L[i] * wet + e->dry_l[i] * dry;
+            R[i] = R[i] * wet + e->dry_r[i] * dry;
+        }
+    }
     preview(e, L, R, n);
 
     /* master: -40..+18 dB, then a look-ahead peak limiter so turning it up makes it louder, not crunchier */
