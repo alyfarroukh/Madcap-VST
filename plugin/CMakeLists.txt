@@ -93,3 +93,16 @@ target_link_libraries(Madcap
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# Windows: keep debug symbols (PDB) and a linker map for release builds, so a crash
+# address from Event Viewer or a host's crash report can be traced to a function.
+if(MSVC)
+    target_compile_options(Madcap PRIVATE /Zi)
+    target_compile_options(madcap_dsp PRIVATE /Zi)
+    foreach(t Madcap_VST3 Madcap_Standalone)
+        if(TARGET ${t})
+            target_link_options(${t} PRIVATE /DEBUG /OPT:REF /OPT:ICF "/MAP:${CMAKE_BINARY_DIR}/symbols/${t}.map")
+        endif()
+    endforeach()
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/symbols)
+endif()

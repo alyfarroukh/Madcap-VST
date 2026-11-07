@@ -1,0 +1,50 @@
+{
+  "Name": "Madcap",
+  "Version": "1.0.0",
+  "Factory Info": {
+    "Vendor": "Madcap Audio",
+    "URL": "https://github.com/",
+    "E-Mail": "",
+    "Flags": {
+      "Unicode": true,
+      "Classes Discardable": false,
+      "Component Non Discardable": false,
+    },
+  },
+  "Classes": [
+    {
+      "CID": "ABCDEF019182FAEB4D6463704D636170",
+      "Category": "Audio Module Class",
+      "Name": "Madcap",
+      "Vendor": "Madcap Audio",
+      "Version": "1.0.0",
+      "SDKVersion": "VST 3.8.0",
+      "Sub Categories": [
+        "Instrument",
+        "Sampler",
+        "Synth",
+      ],
+      "Class Flags": 2,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+    {
+      "CID": "ABCDEF011234ABCD4D6463704D636170",
+      "Category": "Component Controller Class",
+      "Name": "Madcap",
+      "Vendor": "Madcap Audio",
+      "Version": "1.0.0",
+      "SDKVersion": "VST 3.8.0",
+      "Sub Categories": [
+        "Instrument",
+        "Sampler",
+        "Synth",
+      ],
+      "Class Flags": 2,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+  ],
+}
