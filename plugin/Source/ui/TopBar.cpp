@@ -42,10 +42,10 @@ TopBar::TopBar(MadcapProcessor& p, std::function<void(int)> onTab)
     };
     addAndMakeVisible(meter_);
     addAndMakeVisible(inLed_);
-    prev_.setTooltip("Previous factory preset");
-    next_.setTooltip("Next factory preset");
-    presetName_.setTooltip("Presets: factory and your own");
-    save_.setTooltip("Save the current sound (with its sample and picture) as a user preset");
+    prev_.setTooltip("Previous preset for the live input (SAMPLE or IMAGE)");
+    next_.setTooltip("Next preset for the live input (SAMPLE or IMAGE)");
+    presetName_.setTooltip("Presets for SAMPLE and IMAGE: they change GRAIN, ARP and FX only (never your sample or picture)");
+    save_.setTooltip("Save the GRAIN, ARP and FX settings as a preset for the live input");
     undo_.setTooltip("Undo (Ctrl/Cmd+Z)");
     redo_.setTooltip("Redo (Ctrl/Cmd+Shift+Z)");
     rnd_.setTooltip("Randomize every page that isn't locked (LOCK at the bottom right of each page)");
@@ -145,21 +145,38 @@ void TopBar::tick()
 
 void TopBar::stepPreset(int dir)
 {
-    const int n = (int)factoryPresets().size();
+    // step through the factory presets of the live input's category
+    const int cat = proc_.value(P_SRC) > 0.5f ? PresetImage : PresetSample;
+    const auto& fp = factoryPresets();
+    std::vector<int> idx;
+    for (int i = 0; i < (int)fp.size(); ++i)
+        if (fp[(size_t)i].category == cat) idx.push_back(i);
+    if (idx.empty()) return;
     const int cur = proc_.getCurrentProgram();
-    proc_.loadFactoryPreset(((cur + dir) % n + n) % n);
+    int pos = -1;
+    for (int k = 0; k < (int)idx.size(); ++k)
+        if (idx[(size_t)k] == cur) pos = k;
+    const int n = (int)idx.size();
+    pos = pos < 0 ? (dir > 0 ? 0 : n - 1) : ((pos + dir) % n + n) % n;
+    proc_.loadFactoryPreset(idx[(size_t)pos]);
 }
 
 void TopBar::showPresetMenu()
 {
     juce::PopupMenu m;
-    m.addSectionHeader("FACTORY");
     const auto& fp = factoryPresets();
-    for (int i = 0; i < (int)fp.size(); ++i) m.addItem(1 + i, fp[(size_t)i].name, true, false);
-    const auto users = userPresetFiles();
-    if (!users.isEmpty()) {
-        m.addSectionHeader("USER");
-        for (int i = 0; i < users.size(); ++i) m.addItem(1000 + i, users[i].getFileNameWithoutExtension());
+    std::array<juce::Array<juce::File>, 2> users { userPresetFiles(PresetSample), userPresetFiles(PresetImage) };
+    for (int cat = 0; cat < 2; ++cat) {
+        m.addSectionHeader(juce::String(presetCategoryName(cat)).toUpperCase() + " PRESETS");
+        for (int i = 0; i < (int)fp.size(); ++i)
+            if (fp[(size_t)i].category == cat)
+                m.addItem(1 + i, fp[(size_t)i].name, true, proc_.getCurrentProgram() == i);
+        if (!users[(size_t)cat].isEmpty()) {
+            juce::PopupMenu sub;
+            for (int i = 0; i < users[(size_t)cat].size(); ++i)
+                sub.addItem(1000 + cat * 1000 + i, users[(size_t)cat][i].getFileNameWithoutExtension());
+            m.addSubMenu("Your " + juce::String(presetCategoryName(cat)).toLowerCase() + " presets", sub);
+        }
     }
     m.addSeparator();
     m.addItem(900, "Save preset...");
@@ -167,7 +184,8 @@ void TopBar::showPresetMenu()
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&presetName_),
                     [this, users](int r) {
                         if (r <= 0) return;
-                        if (r >= 1000) proc_.loadUserPreset(users[r - 1000]);
+                        if (r >= 2000) proc_.loadUserPreset(users[1][r - 2000]);
+                        else if (r >= 1000) proc_.loadUserPreset(users[0][r - 1000]);
                         else if (r == 900) savePresetDialog();
                         else if (r == 901) {
                             auto dir = userPresetDirectory();
@@ -179,8 +197,10 @@ void TopBar::showPresetMenu()
 
 void TopBar::savePresetDialog()
 {
-    auto* w = new juce::AlertWindow("Save preset", "Name your preset. It is saved with its sample and picture to\n"
-                                                   + userPresetDirectory().getFullPathName(),
+    const int cat = proc_.value(P_SRC) > 0.5f ? PresetImage : PresetSample;
+    auto* w = new juce::AlertWindow("Save " + juce::String(presetCategoryName(cat)).toLowerCase() + " preset",
+                                    "A preset keeps the GRAIN, ARP and FX settings (not the sample or picture).\nSaved to "
+                                        + userPresetDirectory(cat).getFullPathName(),
                                     juce::MessageBoxIconType::NoIcon, this);
     w->addTextEditor("name", proc_.currentPresetName());
     w->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));

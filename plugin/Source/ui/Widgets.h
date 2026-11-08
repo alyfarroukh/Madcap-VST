@@ -17,6 +17,7 @@ public:
     float value() const noexcept { return value_; }
     float norm() const noexcept { return param_.convertTo0to1(value_); }
     void setLabel(const juce::String& s) { label_ = s; repaint(); }
+    void setLabelColour(juce::Colour c) { labelColour_ = c; repaint(); }
     void focusGained(FocusChangeType) override { repaint(); }
     void focusLost(FocusChangeType) override { repaint(); }
 
@@ -29,11 +30,13 @@ protected:
     juce::String valueText() const { return params::format(index_, value_); }
     void updateTooltip();
     int numSteps() const { return gs_param_num_steps(index_); }
+    bool spaceStopsRecording(const juce::KeyPress& k);   // Space stops REC wherever the focus is
 
     MadcapProcessor& proc_;
     juce::RangedAudioParameter& param_;
     const int index_;
     juce::String label_;
+    juce::Colour labelColour_ = colours::textDim;
     float value_ = 0.0f;
     juce::ParameterAttachment attach_;
 };
@@ -88,8 +91,10 @@ public:
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed(const juce::KeyPress&) override;
     void step(int dir);
+    void setAccent(juce::Colour c) { arrowColour_ = c; repaint(); }
 
 private:
+    juce::Colour arrowColour_ = colours::teal;
     Formatter fmt_;
     bool wrap_;
 };

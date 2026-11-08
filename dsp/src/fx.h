@@ -35,12 +35,17 @@ typedef struct {
  * (Householder matrix), per-line damping, very long decays, mid/side width. */
 #define GS_REV_LINES 8
 #define GS_REV_DIFF 4
+#define GS_SMEAR_STAGES 6        /* SMEAR mode: long modulated allpass diffusers per channel */
 #define GS_REV_INFINITE 0.985f   /* decay values at/above this are "infinite" */
 typedef struct {
     float *line[GS_REV_LINES]; int line_len; int w;
     float lp[GS_REV_LINES], hp[GS_REV_LINES];
     float lfo_ph[GS_REV_LINES];
     float *diff[2][GS_REV_DIFF]; int diff_len[2][GS_REV_DIFF]; int diff_i[2][GS_REV_DIFF];
+    float *smear[2][GS_SMEAR_STAGES]; int smear_len; int smear_w;
+    float smear_ph[GS_SMEAR_STAGES];
+    float smear_lp[2];
+    float mode_mix;    /* 0 = ambient, 1 = smear: crossfaded so switching never clicks */
     float *pre; int pre_len; int pre_w;
     float size_s;      /* smoothed size so turning the knob glides instead of clicking */
     int sr;
@@ -62,8 +67,10 @@ void gs_comp_process(GsComp *c, float *l, float *r, int n, float thr_db, float r
                      float makeup_db, float mix, int sr);
 void gs_delay_process(GsDelay *d, float *l, float *r, int n, float time_ms, float fb, float damp, float ping,
                       float mix, int sr);
+/* mode 0 = AMBIENT (MOOD-like FDN), 1 = SMEAR (long modulated diffusion in front of the FDN:
+ * transients dissolve into an ambient pad, longer and darker tail). */
 void gs_reverb_process(GsReverb *rv, float *l, float *r, int n, float size, float damp, float width, float pre_ms,
-                       float mod, float mix, int sr);
+                       float mod, float mix, int mode, int sr);
 
 #ifdef __cplusplus
 }

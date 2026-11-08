@@ -11,6 +11,7 @@ ParamWidget::ParamWidget(MadcapProcessor& p, int paramIndex)
       attach_(*p.param(paramIndex), [this](float v) { value_ = v; updateTooltip(); valueChanged(); }, &p.undoManager())
 {
     setWantsKeyboardFocus(true);
+    setMouseClickGrabsKeyboardFocus(false);   // clicks keep the focus on the editor (Space, Ctrl+Z work)
     setTitle(GS_PARAMS[paramIndex].name);
     attach_.sendInitialUpdate();
 }
@@ -68,7 +69,7 @@ void RingKnob::paint(juce::Graphics& g)
     g.fillEllipse(juce::Rectangle<float>(4.0f, 4.0f).withCentre({c.x + std::sin(a) * pr, c.y - std::cos(a) * pr}));
 
     drawLabel(g, label_, b.removeFromBottom(labelH), juce::Justification::centred, 11.0f,
-              hasKeyboardFocus(true) ? colours::orange : colours::textDim);
+              hasKeyboardFocus(true) ? colours::orange : labelColour_);
 
     if (dragging_ || isMouseButtonDown()) {   // value bubble
         auto txt = valueText();
@@ -163,7 +164,7 @@ void SegmentSwitch::paint(juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
     if (showTitle_) drawLabel(g, label_, b.removeFromTop(14.0f), juce::Justification::centredLeft, 11.0f,
-                              hasKeyboardFocus(true) ? colours::orange : colours::textDim);
+                              hasKeyboardFocus(true) ? colours::orange : labelColour_);
     const int n = labels_.size();
     if (n == 0) return;
     const int sel = juce::roundToInt(value_ - GS_PARAMS[index_].min);
@@ -222,7 +223,7 @@ void Stepper::paint(juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
     drawLabel(g, label_, b.removeFromTop(14.0f), juce::Justification::centredLeft, 11.0f,
-              hasKeyboardFocus(true) ? colours::orange : colours::textDim);
+              hasKeyboardFocus(true) ? colours::orange : labelColour_);
     const float aw = juce::jmin(22.0f, b.getHeight());
     auto left = b.removeFromLeft(aw), right = b.removeFromRight(aw);
     g.setColour(colours::panel);
@@ -230,7 +231,7 @@ void Stepper::paint(juce::Graphics& g)
     g.setColour(colours::blue.withAlpha(0.45f));
     g.drawRect(b, 1.0f);
     for (auto [r, dir] : { std::pair{left, -1}, std::pair{right, 1} }) {
-        g.setColour(colours::teal.withAlpha(0.9f));
+        g.setColour(arrowColour_.withAlpha(0.9f));
         juce::Path tri;
         auto cc = r.getCentre();
         const float s = juce::jmin(5.0f, r.getHeight() * 0.25f);
@@ -291,8 +292,16 @@ void LedToggle::mouseDown(const juce::MouseEvent&)
     setValueComplete(value_ > 0.5f ? 0.0f : 1.0f);
 }
 
+bool ParamWidget::spaceStopsRecording(const juce::KeyPress& k)
+{
+    if (k.getKeyCode() != juce::KeyPress::spaceKey || !(proc_.isRecording() || proc_.isRecordArmed())) return false;
+    proc_.stopRecording();
+    return true;
+}
+
 bool LedToggle::keyPressed(const juce::KeyPress& k)
 {
+    if (spaceStopsRecording(k)) return true;
     if (k.getKeyCode() == juce::KeyPress::spaceKey || k.getKeyCode() == juce::KeyPress::returnKey) {
         setValueComplete(value_ > 0.5f ? 0.0f : 1.0f);
         return true;
@@ -305,6 +314,7 @@ HudButton::HudButton(const juce::String& text, juce::Colour accent)
     : juce::Button(text), accent_(accent)
 {
     setWantsKeyboardFocus(true);
+    setMouseClickGrabsKeyboardFocus(false);
 }
 
 void HudButton::paintButton(juce::Graphics& g, bool over, bool down)
@@ -357,6 +367,7 @@ void PlayButton::mouseDown(const juce::MouseEvent&) { setValueComplete(value_ > 
 
 bool PlayButton::keyPressed(const juce::KeyPress& k)
 {
+    if (spaceStopsRecording(k)) return true;
     if (k.getKeyCode() == juce::KeyPress::returnKey || k.getKeyCode() == juce::KeyPress::spaceKey) {
         setValueComplete(value_ > 0.5f ? 0.0f : 1.0f);
         return true;
@@ -398,6 +409,7 @@ void SourceButton::mouseDown(const juce::MouseEvent&) { toggle(); }
 
 bool SourceButton::keyPressed(const juce::KeyPress& k)
 {
+    if (spaceStopsRecording(k)) return true;
     if (k.getKeyCode() == juce::KeyPress::returnKey || k.getKeyCode() == juce::KeyPress::spaceKey) { toggle(); return true; }
     return false;
 }
@@ -418,7 +430,7 @@ void BpmField::paint(juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
     drawLabel(g, host_ ? "BPM (HOST)" : "BPM", b.removeFromTop(14.0f), juce::Justification::centredLeft, 11.0f,
-              hasKeyboardFocus(true) ? colours::orange : colours::textDim);
+              hasKeyboardFocus(true) ? colours::orange : labelColour_);
     g.setColour(colours::panel);
     g.fillRect(b);
     g.setColour(host_ ? colours::blue.withAlpha(0.5f) : colours::teal.withAlpha(0.8f));

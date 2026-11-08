@@ -377,7 +377,7 @@ static void fx_chain(GsEngine *e, float *L, float *R, int n)
             gs_delay_process(&e->dly, L, R, n, ms, p[P_DLY_FB], p[P_DLY_DAMP], p[P_DLY_PING], p[P_DLY_MIX], e->sr);
             break; }
         case 3: if (ip(e, P_REV_ON)) gs_reverb_process(&e->rev, L, R, n, p[P_REV_SIZE], p[P_REV_DAMP], p[P_REV_WIDTH],
-                                                       p[P_REV_PRE], p[P_REV_MOD], p[P_REV_MIX], e->sr);
+                                                       p[P_REV_PRE], p[P_REV_MOD], p[P_REV_MIX], ip(e, P_REV_MODE), e->sr);
                 break;
         }
     }

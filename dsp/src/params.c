@@ -25,6 +25,7 @@ static const char *const MIDI_MODE_LABELS[] = {"Degree", "Root"};
 static const char *const TEMPO_SRC_LABELS[] = {"Host", "Manual"};
 static const char *const PLAY_LABELS[] = {"Stop", "Play"};
 static const char *const IMG_RES_LABELS[] = {"64", "128", "256", "512", "1024", "2048"};
+static const char *const REV_MODE_LABELS[] = {"Ambient", "Smear"};
 const char *const GS_MOD_DEST_LABELS[] = {"None", "Spray", "Position", "Size", "Density", "Scan", "Tone",
                                           "Reverb Mix", "Delay Fdbk", "Drive"};
 const int GS_SLICE_COUNTS[5] = {1, 2, 4, 8, 16};
@@ -83,7 +84,7 @@ const GsParamDesc GS_PARAMS[P_COUNT] = {
 
     [P_KEY]        = D("key",          "Key",          PAGE_PLAY, 0, 11, 0, FMT_ENUM, GS_NOTE_NAMES),
     [P_SCALE]      = D("scale",        "Scale",        PAGE_PLAY, 0, 8, 1, FMT_ENUM, SCALE_LABELS),
-    [P_SAMPLE_ROOT]= D("sample_root",  "Sample Root",  PAGE_SAMPLE, 0, 11, 0, FMT_ENUM, GS_NOTE_NAMES),
+    [P_SAMPLE_ROOT]= D("sample_root",  "Sample Root",  PAGE_PLAY, 0, 11, 0, FMT_ENUM, GS_NOTE_NAMES),
     [P_OCTAVE]     = D("octave",       "Octave",       PAGE_PLAY, -2, 1, 0, FMT_INT, 0),
     [P_CHORD]      = D("chord",        "Chord Type",   PAGE_PLAY, 0, 9, 5, FMT_ENUM, CHORD_LABELS),
     [P_VOICING]    = C("voicing",      "Voicing",      PAGE_PLAY, 0, 1, 0.3f, FMT_PCT, 1),
@@ -116,7 +117,7 @@ const GsParamDesc GS_PARAMS[P_COUNT] = {
     [P_REV_MIX]    = C("rev_mix",      "Reverb Mix",   PAGE_FX, 0, 1, 0.4f, FMT_PCT, 1),
     [P_FX_ORDER]   = D("fx_order",     "FX Order",     PAGE_FX, 0, 23, 0, FMT_ENUM, GS_FX_ORDER_LABELS),
 
-    [P_MASTER]     = C("master",       "Master",       PAGE_PLAY, -40, 18, 6, FMT_DB, 1),
+    [P_MASTER]     = C("master",       "Master",       PAGE_PLAY, -40, 18, 0, FMT_DB, 1),
 
     [P_TRIM_IN]    = C("cut_in",       "Cut In",       PAGE_SAMPLE, 0, 1, 0, FMT_PCT, 1),
     [P_TRIM_OUT]   = C("cut_out",      "Cut Out",      PAGE_SAMPLE, 0, 1, 1, FMT_PCT, 1),
@@ -181,6 +182,7 @@ const GsParamDesc GS_PARAMS[P_COUNT] = {
     [P_IMG_RES]     = D("img_res",     "Grid Resolution", PAGE_IMAGE, 0, 5, 3, FMT_ENUM, IMG_RES_LABELS),
     [P_DRY_LVL]     = C("dry",         "Dry",          PAGE_PLAY, 0, 1.5f, 0, FMT_PCT, 1),
     [P_WET_LVL]     = C("wet",         "Wet",          PAGE_PLAY, 0, 1.5f, 1, FMT_PCT, 1),
+    [P_REV_MODE]    = D("rev_mode",    "Reverb Mode",  PAGE_FX, 0, 1, 0, FMT_ENUM, REV_MODE_LABELS),
 };
 
 const char *const GS_PARAM_SHORT[P_COUNT] = {
@@ -207,7 +209,7 @@ const char *const GS_PARAM_SHORT[P_COUNT] = {
     [P_GRAIN_HOLD] = "HOLD", [P_GRAIN_INTERP] = "INTERP", [P_IMG_HOLD] = "HOLD", [P_DRV_OS] = "OS",
     [P_DEG1] = "I", [P_DEG2] = "II", [P_DEG3] = "III", [P_DEG4] = "IV", [P_DEG5] = "V", [P_DEG6] = "VI", [P_DEG7] = "VII",
     [P_MIDI_MODE] = "MIDI", [P_LATCH] = "LATCH", [P_VEL_AMT] = "VELOCITY", [P_MOD_DEST] = "MOD WHEEL",
-    [P_PLAY] = "PLAY", [P_FOLLOW_HOST] = "FOLLOW HOST", [P_TEMPO_SRC] = "TEMPO", [P_PREVIEW_LOOP] = "LOOP", [P_IMG_RES] = "GRID RES", [P_DRY_LVL] = "DRY", [P_WET_LVL] = "WET",
+    [P_PLAY] = "PLAY", [P_FOLLOW_HOST] = "FOLLOW HOST", [P_TEMPO_SRC] = "TEMPO", [P_PREVIEW_LOOP] = "LOOP", [P_IMG_RES] = "GRID RES", [P_DRY_LVL] = "DRY", [P_WET_LVL] = "WET", [P_REV_MODE] = "MODE",
 };
 
 int gs_mod_dest_param(int dest)

@@ -53,7 +53,8 @@ void MadcapProcessor::prepareToPlay(double sampleRate, int)
     const juce::ScopedLock pl(prepareLock_);
     if (recActive_.load()) recActive_ = false;
     if (sampleRate <= 0) sampleRate = 44100.0;
-    if (std::abs(recRate_ - sampleRate) > 0.5) { recBuf_.clear(); recBuf_.shrink_to_fit(); recLen_ = 0; }
+    recArmed_ = false;
+    if (std::abs(recRate_ - sampleRate) > 0.5) { recBuf_.clear(); recBuf_.shrink_to_fit(); recLen_ = 0; preroll_.clear(); }
     engine_.prepare(sampleRate);
     currentRate_ = sampleRate;
     installSampleIntoEngine(true);
@@ -151,21 +152,46 @@ void MadcapProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         if (pk > inPeak_.load(std::memory_order_relaxed)) inPeak_.store(pk, std::memory_order_relaxed);
         if (pk > 0.001f) signalTicks_.fetch_add(1, std::memory_order_relaxed);   // above -60 dBFS
 
-        if (recActive_.load(std::memory_order_acquire)) {
+        if (recArmed_.load(std::memory_order_acquire) || recActive_.load(std::memory_order_acquire)) {
             recWriting_.store(true, std::memory_order_seq_cst);
-            if (recActive_.load(std::memory_order_seq_cst)) {
+            // the recorded (mono) sample = the selected input channels summed
+            auto sampleAt = [&](int i) {
+                float s = 0.0f;
+                for (int bi = 0; bi < numIns; ++bi) {
+                    const auto [c0, c1] = range(bi);
+                    for (int c = c0; c < c1; ++c) s += buffer.getReadPointer(c)[i];
+                }
+                return s;
+            };
+            int from = 0;
+            // ARMED: wait for the input to cross the threshold, keeping a short pre-roll so the
+            // attack isn't cut off; the take starts there (no empty space at the start)
+            if (recArmed_.load(std::memory_order_seq_cst) && !preroll_.empty()) {
+                const int P = (int)preroll_.size();
+                from = n;
+                for (int i = 0; i < n; ++i) {
+                    const float s = sampleAt(i);
+                    preroll_[(size_t)prerollW_] = s;
+                    prerollW_ = (prerollW_ + 1) % P;
+                    prerollN_ = std::min(prerollN_ + 1, P);
+                    if (std::abs(s) > kRecTriggerLevel) {
+                        const int start = (prerollW_ - prerollN_ + P) % P;
+                        const int len = std::min(prerollN_, (int)recBuf_.size());
+                        for (int k = 0; k < len; ++k) recBuf_[(size_t)k] = preroll_[(size_t)((start + k) % P)];
+                        recLen_.store(len, std::memory_order_release);
+                        recArmed_.store(false, std::memory_order_seq_cst);
+                        recActive_.store(true, std::memory_order_seq_cst);
+                        from = i + 1;
+                        break;
+                    }
+                }
+            }
+            if (recActive_.load(std::memory_order_seq_cst) && from < n) {
                 const int len = recLen_.load(std::memory_order_relaxed);
-                const int k = std::min(n, (int)recBuf_.size() - len);
+                const int k = std::min(n - from, (int)recBuf_.size() - len);
                 if (k > 0) {
                     float* dst = recBuf_.data() + len;
-                    std::fill(dst, dst + k, 0.0f);
-                    for (int bi = 0; bi < numIns; ++bi) {
-                        const auto [c0, c1] = range(bi);
-                        for (int c = c0; c < c1; ++c) {
-                            const float* src = buffer.getReadPointer(c);
-                            for (int i = 0; i < k; ++i) dst[i] += src[i];   // normalised when the take ends
-                        }
-                    }
+                    for (int i = 0; i < k; ++i) dst[i] = sampleAt(from + i);   // normalised when the take ends
                     recPeak_.store(std::max(recPeak_.load(std::memory_order_relaxed), pk), std::memory_order_relaxed);
                     recLen_.store(len + k, std::memory_order_release);
                 }
@@ -288,7 +314,7 @@ void MadcapProcessor::timerCallback()
             gridJobPending_ = false;
         });
     }
-    if (recWasActive_ && !recActive_.load())   // the 60 s buffer filled up: finish automatically
+    if (recWasActive_ && !recActive_.load() && !recArmed_.load())   // the 60 s buffer filled up: finish automatically
         stopRecording();
 }
 
@@ -370,6 +396,43 @@ void MadcapProcessor::cropToCut()
     });
 }
 
+juce::String MadcapProcessor::suggestedExportName() const
+{
+    auto d = sample_.get();
+    const auto base = d ? juce::File::createLegalFileName(d->name) : juce::String("Madcap sample");
+    return base + " cut.wav";
+}
+
+void MadcapProcessor::exportCutAsync(const juce::File& destination)
+{
+    auto d = sample_.get();
+    if (!d || d->samples.empty()) { setStatus("Nothing to export"); return; }
+    float a = value(P_TRIM_IN), b = value(P_TRIM_OUT);
+    if (b < a) std::swap(a, b);
+    const size_t n = d->samples.size();
+    const size_t s = std::min(n - 1, (size_t)((double)a * (double)n));
+    const size_t e = std::max(s + 1, std::min(n, (size_t)((double)b * (double)n)));
+    std::vector<float> cut(d->samples.begin() + (std::ptrdiff_t)s, d->samples.begin() + (std::ptrdiff_t)e);
+    const double rate = d->rate;
+    auto file = destination.hasFileExtension(".wav") ? destination : destination.withFileExtension(".wav");
+    loader_.addJob([this, cut = std::move(cut), rate, file] {
+        file.deleteFile();
+        std::unique_ptr<juce::OutputStream> stream(file.createOutputStream().release());
+        juce::WavAudioFormat wav;
+        auto writer = stream ? wav.createWriterFor(stream, juce::AudioFormatWriterOptions{}
+                                                               .withSampleRate(rate)
+                                                               .withNumChannels(1)
+                                                               .withBitsPerSample(24))
+                             : nullptr;
+        if (!writer) { setStatus("Could not write " + file.getFullPathName()); return; }
+        const float* chans[1] = { cut.data() };
+        const bool ok = writer->writeFromFloatArrays(chans, 1, (int)cut.size());
+        writer.reset();
+        setStatus(ok ? "Exported " + file.getFileName() + " (" + juce::String((double)cut.size() / rate, 2) + " s)"
+                     : "Could not write " + file.getFullPathName());
+    });
+}
+
 //==============================================================================
 bool MadcapProcessor::startRecording()
 {
@@ -384,21 +447,28 @@ bool MadcapProcessor::startRecording()
     for (int i = 0; i < 200 && recWriting_.load(); ++i) juce::Thread::sleep(1);
     const size_t size = (size_t)(SampleStore::kMaxSeconds * sr);
     if (recBuf_.size() != size) recBuf_.assign(size, 0.0f);
+    const size_t pre = (size_t)juce::jmax(64.0, sr * kRecPrerollSeconds);
+    if (preroll_.size() != pre) preroll_.assign(pre, 0.0f);
+    prerollW_ = 0;
+    prerollN_ = 0;
     recRate_ = sr;
     recLen_ = 0;
     recPeak_ = 0.0f;
-    recActive_.store(true, std::memory_order_release);
+    recActive_.store(false, std::memory_order_release);
+    recArmed_.store(true, std::memory_order_release);    // starts when the input crosses the threshold
     recWasActive_ = true;
-    setStatus("Recording ...");
+    setStatus("REC armed: waiting for signal ... (Space or STOP to stop)");
     return true;
 }
 
 void MadcapProcessor::stopRecording()
 {
     recWasActive_ = false;
+    const bool wasWaiting = recArmed_.exchange(false, std::memory_order_seq_cst);
     recActive_.store(false, std::memory_order_seq_cst);
     for (int i = 0; i < 200 && recWriting_.load(); ++i) juce::Thread::sleep(1);
     const int len = std::min(recLen_.exchange(0), (int)recBuf_.size());
+    if (wasWaiting && len == 0) { setStatus("REC cancelled: no signal came in"); return; }
     if (len < (int)(recRate_ * 0.05)) { setStatus("Recording too short"); return; }
     std::vector<float> take(recBuf_.begin(), recBuf_.begin() + len);
     normalizePeak(take, 0.89f);
@@ -532,12 +602,15 @@ const juce::String MadcapProcessor::getProgramName(int index)
 
 juce::String MadcapProcessor::currentPresetName() const { return presetName_; }
 
-void MadcapProcessor::applyPresetValues(const std::vector<std::pair<int, double>>& values)
+void MadcapProcessor::applyPresetValues(const std::vector<std::pair<int, double>>& values, int category)
 {
+    // GRAIN / ARP / FX only: defaults first, then the preset's values. The sample, the picture,
+    // the IMAGE / SAMPLE pages, the harmony and the transport are left alone.
     for (int p = 0; p < P_COUNT; ++p)
-        if (!presetKeepsParameter(p)) setValue(p, GS_PARAMS[p].def);
+        if (presetAppliesTo(p)) setValue(p, GS_PARAMS[p].def);
     for (const auto& [p, v] : values)
-        if (p >= 0 && p < P_COUNT && !presetKeepsParameter(p)) setValue(p, (float)v);
+        if (p >= 0 && p < P_COUNT && presetAppliesTo(p)) setValue(p, (float)v);
+    setValue(P_SRC, category == PresetImage ? 1.0f : 0.0f);   // the preset's input becomes the live one
 }
 
 void MadcapProcessor::loadFactoryPreset(int index)
@@ -546,11 +619,7 @@ void MadcapProcessor::loadFactoryPreset(int index)
     if (index < 0 || index >= (int)all.size()) return;
     const auto& fp = all[(size_t)index];
     undo_.beginNewTransaction(juce::String("Preset ") + fp.name);
-    applyPresetValues(fp.values);
-    if (fp.poster >= 0) {
-        image_.setPoster(fp.poster);
-        installImageIntoEngine(false);
-    }
+    applyPresetValues(fp.values, fp.category);
     currentProgram_ = index;
     presetName_ = fp.name;
 }
@@ -559,27 +628,55 @@ bool MadcapProcessor::saveUserPreset(const juce::String& name)
 {
     const auto clean = juce::File::createLegalFileName(name.trim());
     if (clean.isEmpty()) return false;
-    auto dir = userPresetDirectory();
+    const int category = value(P_SRC) > 0.5f ? PresetImage : PresetSample;   // saved for the live input
+    auto dir = userPresetDirectory(category);
     if (!dir.createDirectory()) return false;
     presetName_ = clean;
-    auto xml = createStateXml(true);
+    juce::XmlElement xml("MADCAP_PRESET");
+    xml.setAttribute("version", 2);
+    xml.setAttribute("name", clean);
+    xml.setAttribute("category", presetCategoryName(category));
+    for (int p = 0; p < P_COUNT; ++p) {
+        if (!presetAppliesTo(p)) continue;
+        auto* e = xml.createNewChildElement("PARAM");
+        e->setAttribute("id", GS_PARAMS[p].id);
+        e->setAttribute("value", (double)value(p));
+    }
     const auto file = dir.getChildFile(clean + presetExtension());
-    const bool ok = xml->writeTo(file);
-    setStatus(ok ? "Saved preset " + clean : "Could not save " + file.getFullPathName());
+    const bool ok = xml.writeTo(file);
+    setStatus(ok ? juce::String(presetCategoryName(category)) + " preset saved: " + clean : "Could not save " + file.getFullPathName());
     return ok;
 }
 
 bool MadcapProcessor::loadUserPreset(const juce::File& f)
 {
     auto xml = juce::parseXML(f);
-    if (!xml || !xml->hasTagName("MADCAP")) { setStatus("Not a Madcap preset"); return false; }
-    // a preset never changes transport / MIDI setup
-    std::array<float, P_COUNT> kept{};
-    for (int p = 0; p < P_COUNT; ++p) kept[(size_t)p] = value(p);
+    if (!xml) { setStatus("Not a Madcap preset"); return false; }
+    std::vector<std::pair<int, double>> values;
+    int category = PresetSample;
+    if (xml->hasTagName("MADCAP_PRESET")) {
+        category = xml->getStringAttribute("category") == "Image" ? PresetImage : PresetSample;
+        for (auto* e : xml->getChildWithTagNameIterator("PARAM")) {
+            const int p = gs_param_find(e->getStringAttribute("id").toRawUTF8());
+            if (p >= 0) values.emplace_back(p, e->getDoubleAttribute("value", GS_PARAMS[p].def));
+        }
+    } else if (xml->hasTagName("MADCAP")) {
+        // presets saved by earlier versions: a whole project state. Take only GRAIN / ARP / FX
+        // (never their sample or picture).
+        if (auto* ps = xml->getChildByName(apvts_.state.getType())) {
+            for (auto* e : ps->getChildWithTagNameIterator("PARAM")) {
+                const int p = gs_param_find(e->getStringAttribute("id").toRawUTF8());
+                if (p < 0) continue;
+                if (p == P_SRC) category = e->getDoubleAttribute("value") > 0.5 ? PresetImage : PresetSample;
+                values.emplace_back(p, e->getDoubleAttribute("value", GS_PARAMS[p].def));
+            }
+        }
+    } else {
+        setStatus("Not a Madcap preset");
+        return false;
+    }
     undo_.beginNewTransaction("Preset " + f.getFileNameWithoutExtension());
-    restoreStateXml(*xml);
-    for (int p = 0; p < P_COUNT; ++p)
-        if (presetKeepsParameter(p) && p != P_TRIM_IN && p != P_TRIM_OUT) setValue(p, kept[(size_t)p]);
+    applyPresetValues(values, category);
     presetName_ = f.getFileNameWithoutExtension();
     return true;
 }

@@ -118,14 +118,18 @@ level meter and the big **PLAY / STOP** transport button.
   engine rate, up to 60 s. **DEMO** brings back the built-in sung "ahh" on C.
 * **SAMPLE ON** (top left) makes the sample the live input. Only one input plays at a time,
   so the IMAGE tab greys out (and vice versa). The SAMPLE / IMAGE switch is on both tabs.
-* **REC / STOP** records from the **RECORD INPUT**: in the Standalone app, pick the audio device
+* **REC** arms the recorder: the take starts by itself when signal comes in (above -40 dB, with
+  30 ms of pre-roll so the attack is kept), so the sample never starts with empty space.
+  **Space** (or STOP) ends the take. REC records from the **RECORD INPUT**: in the Standalone app, pick the audio device
   and the input channel your mic or guitar is plugged into (or open **Audio settings**). In a
   DAW, enable Madcap's sidechain and route your mic / guitar track to it. Choose all inputs, input 1
   or input 2, and watch the level meter. The take becomes the new sample.
 * **PLAY** auditions the cut dry (also while stopped), with **LOOP**.
 * **SLICES** 1 / 2 / 4 / 8 / 16, **GRID** (equal) or **HITS** (transients inside the cut).
   Tap or drag across the slice strip, or use SLICE / SPAN, to choose where the grains read.
-* **ROOT:** the note the sample was sung on. **INPUT:** SAMPLE or IMAGE.
+* **EXPORT** saves the sample between the IN and OUT flags as a WAV (mono, 24-bit, the sample's
+  own rate). The dialog opens in `Music/Madcap Recordings`.
+* **INPUT:** SAMPLE or IMAGE. (ROOT, the note the sample was sung on, is on the PLAY tab.)
 * **Tempo:** follows the host by default (TEMPO HOST / MANUAL plus a BPM field). The
   Standalone app shows a **TAP** pad and the BPM field (30–300).
 
@@ -169,21 +173,30 @@ chord notes around a ring, with the note that's playing lit.
 ### 5 · FX
 DRIVE (Tape / Fuzz / Crush, 2× / 4× oversampling), COMP, DELAY (tape, free or synced,
 ping-pong, wow/flutter) and REVERB (8-line modulated FDN, decay 0.8 s → 60 s → INFINITE,
-width 0–150 %). Move a module with ◀ ▶: the order on screen is the order of the chain, also
+width 0–150 %), with two modes: **AMBIENT** (the MOOD-style reverb) and **SMEAR** (long modulated
+diffusion in front of it that dissolves the sound into an ambient pad, with a longer, darker tail).
+Each module has its own colour: DRIVE orange, COMP grey, DELAY green, REVERB teal. Move a module with ◀ ▶: the order on screen is the order of the chain, also
 available as the automatable **FX Order** parameter.
 
 ### 6 · PLAY
 The grain field XY pad (X = position, Y = spray), **DRY** (the plain input mixed in with no
 grains, arp or FX: the sample's cut looping at its own pitch, or the plain sweeper with IMAGE
-input) and **WET** (the level of everything Madcap generates), KEY / SCALE / OCT, VOICING, MASTER (−40…+18 dB, followed by a look-ahead limiter
-so it never clips), the interval strip, and seven chord pads I–VII. Click a pad to select it;
+input) and **WET** (the level of everything Madcap generates), KEY / SCALE / OCT, VOICING, MASTER (−40…+18 dB, 0 dB when the plugin opens, followed by a look-ahead limiter
+so it never clips), ROOT (the note the sample was sung on), the interval strip, and seven chord pads I–VII. Click a pad to select it;
 Shift-click adds it to a cluster. Pads light up when MIDI selects them.
 
 ### Presets
-14 factory presets (Choir Cloud, Glass Mosaic, Tunnel Drone, Strum Pad, Arp Shimmer, Glide
-Choir, Infinite Haze, Tape Crush Pulse, Stab Arp, Sixteenth Walk, Image Pent Melody, Height
-Sketch, Spectral Noise Field, Image Grain Cloud). They're also exposed to the host as
-programs. **SAVE** writes a user preset, including its sample and picture, to:
+Presets come in two categories, **SAMPLE** and **IMAGE**. Loading one switches to its input and
+changes **only the GRAIN, ARP and FX settings**: your sample, picture, cut, IMAGE / SAMPLE settings
+and harmony stay as they are. ◀ ▶ step through the presets of the live input.
+
+* Sample: Choir Cloud, Glass Mosaic, Tunnel Drone, Strum Pad, Arp Shimmer, Glide Choir, Infinite
+  Haze, Smear Choir, Tape Crush Pulse, Stab Arp, Sixteenth Walk
+* Image: Image Pent Melody, Height Sketch, Spectral Noise Field, Image Grain Cloud, Image Smear
+  Pad, Image Arp Bells, Image Fuzz Steps
+
+They're also exposed to the host as programs. **SAVE** stores the GRAIN / ARP / FX settings as a
+preset for the live input, in `Presets/Sample` or `Presets/Image` under:
 
 * Windows: `%APPDATA%\Madcap\Presets\`
 * macOS: `~/Library/Application Support/Madcap/Presets/`

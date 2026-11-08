@@ -47,6 +47,7 @@ void setExtreme(madcap::Engine& e, int variant)
     e.setTarget(P_DLY_TIME, variant & 1 ? 10.0f : 600.0f);
     e.setTarget(P_REV_ON, 1.0f);
     e.setTarget(P_REV_SIZE, 1.0f);    // infinite
+    e.setTarget(P_REV_MODE, (float)(variant & 1));   // ambient / smear
     e.setTarget(P_REV_MIX, 1.0f);
     e.setTarget(P_REV_WIDTH, 1.5f);
     e.setTarget(P_REV_MOD, 1.0f);
@@ -479,4 +480,33 @@ TEST_CASE("PLAY tab DRY plays the plain input, WET scales everything generated",
         e->noteOn(60, 1.0f);
         CHECK(render(*e, 0.5, 256).rms > 1e-2);
     }
+}
+
+
+TEST_CASE("SMEAR reverb: finite, bounded, a longer pad-like tail, click-free switching", "[engine][fx]")
+{
+    auto tailAfterStop = [](int mode) {
+        auto e = makeEngine(48000.0);
+        e->setTarget(P_REV_MODE, (float)mode);
+        e->setTarget(P_REV_SIZE, 0.5f);
+        e->setTarget(P_REV_MIX, 0.7f);
+        e->setTarget(P_DLY_ON, 0.0f);
+        render(*e, 1.0, 256);
+        e->setTarget(P_GRAIN_ON, 0.0f);          // input stops, the reverb tail rings on
+        render(*e, 1.5, 256);
+        return render(*e, 0.5, 256).rms;
+    };
+    const double ambient = tailAfterStop(0), smear = tailAfterStop(1);
+    CHECK(smear > ambient);                      // SMEAR holds on longer
+
+    auto e = makeEngine(96000.0);
+    e->setTarget(P_REV_MIX, 1.0f);
+    int step = 0;
+    auto st = render(*e, 3.0, 333, [&](int done) {
+        const int t = done / 9600;               // flip the mode every 100 ms
+        if (t != step) { step = t; e->setTarget(P_REV_MODE, (float)(t & 1)); }
+    });
+    CHECK(st.finite);
+    CHECK(st.peak <= 1.0f);
+    CHECK(st.rms > 1e-3);
 }

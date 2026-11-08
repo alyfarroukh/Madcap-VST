@@ -58,11 +58,17 @@ public:
     void loadImageAsync(const juce::File& f);
     void selectPoster(int index);
     void cropToCut();
+    // EXPORT: write the sample between IN and OUT to a WAV (mono, 24-bit, the sample's own rate).
+    void exportCutAsync(const juce::File& destination);
+    juce::String suggestedExportName() const;
     void useDemoSample();
 
     bool startRecording();
     void stopRecording();
     bool isRecording() const noexcept { return recActive_.load(); }
+    bool isRecordArmed() const noexcept { return recArmed_.load(); }   // REC pressed, waiting for signal
+    static constexpr float kRecTriggerLevel = 0.01f;     // -40 dBFS starts the take
+    static constexpr double kRecPrerollSeconds = 0.03;   // kept before the trigger so the attack survives
     float recordingSeconds() const noexcept;
     float recordingPeak() const noexcept { return recPeak_.load(); }
     float takeInputPeak() noexcept { return inPeak_.exchange(0.0f); }   // editor meter
@@ -106,7 +112,7 @@ private:
     void installSampleIntoEngine(bool now);
     void installImageIntoEngine(bool now);
     void setStatus(const juce::String& s);
-    void applyPresetValues(const std::vector<std::pair<int, double>>& values);
+    void applyPresetValues(const std::vector<std::pair<int, double>>& values, int category);
     std::unique_ptr<juce::XmlElement> createStateXml(bool includeMedia);
     void restoreStateXml(const juce::XmlElement& xml);
     void handleMidi(const juce::MidiMessage& m);
@@ -149,6 +155,9 @@ private:
     juce::File outFile_, lastOutFile_;              // counts blocks with input above -60 dBFS
     double recRate_ = 48000.0;
     bool recWasActive_ = false;          // message thread
+    std::atomic<bool> recArmed_{false};
+    std::vector<float> preroll_;         // ring of the last few ms while armed (audio thread)
+    int prerollW_ = 0, prerollN_ = 0;
 
     // host / tempo
     std::atomic<double> hostBpm_{0.0};

@@ -67,6 +67,7 @@ public:
         channel_.setSelectedId(p.recordChannel() + 1, juce::dontSendNotification);
         channel_.setTooltip("Which channel(s) of the record input REC captures");
         channel_.onChange = [this] { proc_.setRecordChannel(channel_.getSelectedId() - 1); };
+        for (auto* cb : { &channel_, &device_, &input_ }) cb->setMouseClickGrabsKeyboardFocus(false);
 
         dm_ = standalone::deviceManager();
         if (dm_ != nullptr) {
@@ -222,16 +223,29 @@ public:
           wave_(add<WaveformView>(p)), slices_(add<SliceStrip>(p)),
           load_(button("Load")), rec_(button("Rec", colours::orange)), play_(button("Play", colours::green)),
           loop_(led(P_PREVIEW_LOOP, colours::green)), crop_(button("Crop", colours::orange)), demo_(button("Demo")),
-          root_(stepper(P_SAMPLE_ROOT, {}, true)),
+          export_(button("Export")),
           count_(seg(P_SLICES)), mode_(seg(P_SLICE_MODE)), slice_(stepper(P_SLICE_SEL)), span_(stepper(P_SLICE_SPAN)),
           tempoSrc_(seg(P_TEMPO_SRC)), bpm_(add<BpmField>(p)), follow_(led(P_FOLLOW_HOST, colours::amber)),
           tap_(button("Tap", colours::amber)), recPanel_(add<RecordInputPanel>(p))
     {
         load_.setTooltip("Load WAV, AIFF, FLAC, MP3 or OGG (up to 60 s, mixed to mono). You can also drop a file on Madcap.");
-        rec_.setTooltip("Record from the RECORD INPUT below, press again to stop: the take becomes the sample");
+        rec_.setTooltip("REC arms and waits: recording starts when signal comes in (above -40 dB), so the sample has "
+                        "no empty space at the start. Space (or STOP) ends the take, which becomes the sample.");
         play_.setTooltip("Audition the cut dry (works while the transport is stopped)");
         crop_.setTooltip("Make the cut permanent");
         demo_.setTooltip("Load the built-in sung 'ahh' demo voice (C)");
+        export_.setTooltip("Export the sample between the IN and OUT flags as a WAV file (mono, 24-bit)");
+        export_.onClick = [this] {
+            auto dir = MadcapProcessor::recordingsFolder();
+            dir.createDirectory();
+            exportChooser_ = std::make_unique<juce::FileChooser>("Export the cut as WAV", dir.getChildFile(proc_.suggestedExportName()), "*.wav");
+            exportChooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                            | juce::FileBrowserComponent::warnAboutOverwriting,
+                                        [this](const juce::FileChooser& fc) {
+                                            auto f = fc.getResult();
+                                            if (f != juce::File()) proc_.exportCutAsync(f);
+                                        });
+        };
         tap_.setTooltip("Tap the tempo");
         input_.setAccent(colours::green);
         input_.setTooltip("Input: SAMPLE or IMAGE (only one plays at a time)");
@@ -246,8 +260,11 @@ public:
                                   });
         };
         rec_.onClick = [this] {
-            if (proc_.isRecording()) proc_.stopRecording();
-            else proc_.startRecording();
+            if (proc_.isRecording() || proc_.isRecordArmed()) proc_.stopRecording();
+            else if (proc_.startRecording()) {
+                // keep the keyboard on the plugin window so Space stops the take
+                if (auto* ed = findParentComponentOfClass<juce::AudioProcessorEditor>()) ed->grabKeyboardFocus();
+            }
         };
         play_.onClick = [this] { proc_.engine().setPreview(!proc_.engine().isPreviewing()); };
         crop_.onClick = [this] { proc_.cropToCut(); };
@@ -272,7 +289,7 @@ public:
         loop_.setBounds(270, 254, 84, 30);
         crop_.setBounds(360, 254, 84, 30);
         demo_.setBounds(450, 254, 70, 30);
-        root_.setBounds(540, 244, 110, 40);
+        export_.setBounds(526, 254, 90, 30);
         count_.setBounds(0, 298, 300, 40);
         mode_.setBounds(312, 298, 160, 40);
         slice_.setBounds(484, 298, 110, 40);
@@ -291,9 +308,12 @@ public:
     void update() override
     {
         setDimmed(juce::roundToInt(proc_.value(P_SRC)) != 0);
-        const bool recording = proc_.isRecording();
-        rec_.setButtonText(recording ? "Stop" : "Rec");
-        rec_.setFilled(recording);
+        const bool armed = proc_.isRecordArmed();
+        const bool recording = proc_.isRecording() || armed;
+        rec_.setButtonText(armed ? "Wait" : (recording ? "Stop" : "Rec"));
+        rec_.setAccent(armed ? colours::amber : colours::orange);
+        // waiting for signal: blink
+        rec_.setFilled(recording && !(armed && (juce::Time::getMillisecondCounter() / 400) % 2 == 1));
         play_.setFilled(proc_.engine().isPreviewing());
         const bool host = !proc_.isStandalone() && proc_.value(P_TEMPO_SRC) < 0.5f && proc_.hostBpm() > 1.0;
         bpm_.setDisplayOverride(host ? (float)proc_.hostBpm() : -1.0f, host);
@@ -304,9 +324,13 @@ public:
     void paint(juce::Graphics& g) override
     {
         auto info = juce::Rectangle<float>(0, 430, (float)W - 90.0f, 20.0f);
-        if (proc_.isRecording()) {
+        if (proc_.isRecordArmed()) {
+            drawLed(g, { 8.0f, info.getCentreY() }, 5.0f, true, colours::amber);
+            drawLabel(g, "REC ARMED - waiting for signal (above -40 dB) ... Space or STOP to cancel", info.withTrimmedLeft(20.0f),
+                      juce::Justification::centredLeft, 14.0f, colours::amber, Weight::Bold);
+        } else if (proc_.isRecording()) {
             drawLed(g, { 8.0f, info.getCentreY() }, 5.0f, true, colours::orange);
-            drawLabel(g, "REC  " + juce::String(proc_.recordingSeconds(), 1) + " s / 60 s", info.withTrimmedLeft(20.0f),
+            drawLabel(g, "REC  " + juce::String(proc_.recordingSeconds(), 1) + " s / 60 s   -   Space or STOP to finish", info.withTrimmedLeft(20.0f),
                       juce::Justification::centredLeft, 15.0f, colours::orange, Weight::Bold);
         } else if (!proc_.hasRecordInput()) {
             drawLabel(g, proc_.isStandalone() ? "No audio input: choose a device and input channel in RECORD INPUT"
@@ -325,8 +349,7 @@ private:
     SliceStrip& slices_;
     HudButton &load_, &rec_, &play_;
     LedToggle& loop_;
-    HudButton &crop_, &demo_;
-    Stepper& root_;
+    HudButton &crop_, &demo_, &export_;
     SegmentSwitch &count_, &mode_;
     Stepper &slice_, &span_;
     SegmentSwitch& tempoSrc_;
@@ -334,7 +357,7 @@ private:
     LedToggle& follow_;
     HudButton& tap_;
     RecordInputPanel& recPanel_;
-    std::unique_ptr<juce::FileChooser> chooser_;
+    std::unique_ptr<juce::FileChooser> chooser_, exportChooser_;
     bool recShown_ = false;
 };
 
@@ -567,9 +590,15 @@ public:
         : proc_(p), which_(which), move_(std::move(move)), left_("<"), right_(">")
     {
         static const int onIds[4] = {P_DRV_ON, P_CMP_ON, P_DLY_ON, P_REV_ON};
-        on_ = std::make_unique<LedToggle>(p, onIds[which]);
+        accent_ = accent(which);
+        on_ = std::make_unique<LedToggle>(p, onIds[which], accent_);
+        on_->setLabelColour(accent_);
         addAndMakeVisible(*on_);
-        auto k = [&](int id) { knobs_.push_back(std::make_unique<RingKnob>(p, id)); addAndMakeVisible(*knobs_.back()); };
+        auto k = [&](int id) {
+            knobs_.push_back(std::make_unique<RingKnob>(p, id, accent_));
+            knobs_.back()->setLabelColour(accent_.withAlpha(0.85f));
+            addAndMakeVisible(*knobs_.back());
+        };
         switch (which) {
             case 0:
                 seg1_ = std::make_unique<SegmentSwitch>(p, P_DRV_TYPE);
@@ -584,9 +613,16 @@ public:
                 k(P_DLY_TIME); k(P_DLY_FB); k(P_DLY_DAMP); k(P_DLY_PING); k(P_DLY_MIX);
                 break;
             default:
+                seg1_ = std::make_unique<SegmentSwitch>(p, P_REV_MODE);
+                seg1_->setTooltip("AMBIENT: the MOOD-style reverb. SMEAR: long diffusion that dissolves the sound into an ambient pad");
                 k(P_REV_SIZE); k(P_REV_WIDTH); k(P_REV_MOD); k(P_REV_DAMP); k(P_REV_PRE); k(P_REV_MIX);
                 break;
         }
+        for (auto* s : { seg1_.get(), seg2_.get() })
+            if (s) { s->setAccent(accent_); s->setLabelColour(accent_); }
+        if (sync_) { sync_->setAccent(accent_); sync_->setLabelColour(accent_); }
+        left_.setAccent(accent_);
+        right_.setAccent(accent_);
         for (auto* c : { (juce::Component*)seg1_.get(), (juce::Component*)seg2_.get(), (juce::Component*)sync_.get() })
             if (c) addAndMakeVisible(*c);
         addAndMakeVisible(left_);
@@ -595,6 +631,16 @@ public:
         right_.setTooltip("Move this effect later in the chain");
         left_.onClick = [this] { move_(which_, -1); };
         right_.onClick = [this] { move_(which_, 1); };
+    }
+
+    static juce::Colour accent(int which)
+    {
+        switch (which & 3) {
+            case 0: return colours::fxDrive;
+            case 1: return colours::fxComp;
+            case 2: return colours::fxDelay;
+            default: return colours::fxReverb;
+        }
     }
 
     static const char* title(int which)
@@ -606,13 +652,13 @@ public:
     void paint(juce::Graphics& g) override
     {
         const bool on = proc_.value(on_->paramIndex()) > 0.5f;
-        drawPanel(g, getLocalBounds().toFloat(), title(which_), on ? colours::teal : colours::blue);
+        drawPanel(g, getLocalBounds().toFloat(), title(which_), on ? accent_ : accent_.withAlpha(0.45f));
         if (which_ == 1) {   // gain reduction meter
             auto r = juce::Rectangle<float>(12.0f, 344.0f, (float)getWidth() - 24.0f, 8.0f);
             g.setColour(colours::blueDim);
             g.fillRect(r);
             const float gr = juce::jlimit(0.0f, 24.0f, grShown_);
-            g.setColour(colours::orange);
+            g.setColour(accent_.interpolatedWith(colours::orange, 0.35f));
             g.fillRect(r.withWidth(r.getWidth() * gr / 24.0f));
             drawLabel(g, "GR " + juce::String(gr, 1) + " dB", r.translated(0.0f, -14.0f).withHeight(12.0f),
                       juce::Justification::centredLeft, 10.0f, colours::textDim);
@@ -627,7 +673,8 @@ public:
         if (seg2_) { seg2_->setBounds(10, y, getWidth() - 20, 40); y += 46; }
         if (sync_) { sync_->setBounds(10, y, getWidth() - 20, 40); y += 46; }
         const int kw = (getWidth() - 20) / 2;
-        const int kh = (which_ == 0 || which_ == 2) ? 96 : 98;
+        const int rows = ((int)knobs_.size() + 1) / 2;
+        const int kh = juce::jmin(98, (getHeight() - 44 - y) / juce::jmax(1, rows));
         for (size_t i = 0; i < knobs_.size(); ++i)
             knobs_[i]->setBounds(10 + (int)(i % 2) * kw, y + (int)(i / 2) * kh, kw, kh - 4);
         left_.setBounds(getWidth() / 2 - 54, getHeight() - 34, 50, 26);
@@ -651,6 +698,7 @@ private:
     std::unique_ptr<Stepper> sync_;
     std::vector<std::unique_ptr<RingKnob>> knobs_;
     HudButton left_, right_;
+    juce::Colour accent_;
     bool wasOn_ = false;
     float grShown_ = 0.0f;
 };
@@ -721,7 +769,7 @@ public:
           voicing_(knob(P_VOICING)), master_(knob(P_MASTER, colours::orange)),
           interval_(seg(P_CHORD)), pads_(add<ChordPads>(p)),
           latch_(led(P_LATCH, colours::amber)), midiMode_(seg(P_MIDI_MODE)), vel_(knob(P_VEL_AMT)),
-          mod_(stepper(P_MOD_DEST, {}, true))
+          mod_(stepper(P_MOD_DEST, {}, true)), root_(stepper(P_SAMPLE_ROOT, {}, true))
     {
         interval_.setLabel("Interval");
         latch_.setLabel("Latch");
@@ -752,12 +800,13 @@ public:
         midiMode_.setBounds(112, 404, 200, 40);
         vel_.setBounds(326, 398, 76, 66);
         mod_.setBounds(414, 404, 200, 40);
+        root_.setBounds(626, 404, 110, 40);
     }
 
     void paint(juce::Graphics& g) override
     {
-        drawLabel(g, "Click a pad to select, Shift-click to add (cluster). MIDI notes light the pads.",
-                  { 630.0f, 404.0f, 210.0f, 40.0f }, juce::Justification::centredLeft, 10.5f, colours::textDim, Weight::Medium);
+        drawLabel(g, "Pad: select. Shift-click: add (cluster).", { 744.0f, 404.0f, 100.0f, 40.0f },
+                  juce::Justification::centredLeft, 10.0f, colours::textDim, Weight::Medium);
     }
 
 private:
@@ -771,6 +820,7 @@ private:
     SegmentSwitch& midiMode_;
     RingKnob& vel_;
     Stepper& mod_;
+    Stepper& root_;
 };
 
 //==============================================================================

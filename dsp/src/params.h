@@ -59,6 +59,7 @@ enum {
     P_IMG_RES,        /* image analysis grid: max columns 64 .. 2048 */
     P_DRY_LVL,        /* PLAY tab: the plain input (no grains / arp / FX), mixed before the master */
     P_WET_LVL,        /* PLAY tab: everything Madcap generates (grains, arp, FX) */
+    P_REV_MODE,       /* reverb: 0 ambient, 1 smear */
     P_COUNT
 };
 

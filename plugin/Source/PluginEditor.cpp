@@ -82,6 +82,13 @@ void MadcapEditor::tick()
 bool MadcapEditor::keyPressed(const juce::KeyPress& k)
 {
     const auto mods = k.getModifiers();
+    // Space stops a recording (or cancels one that is still waiting for signal); otherwise
+    // Space is left to the host (transport)
+    if (k.getKeyCode() == juce::KeyPress::spaceKey && !mods.isAnyModifierKeyDown()
+        && (proc_.isRecording() || proc_.isRecordArmed())) {
+        proc_.stopRecording();
+        return true;
+    }
     if (mods.isCommandDown() && (k.getKeyCode() == 'Z' || k.getKeyCode() == 'z')) {
         if (mods.isShiftDown()) proc_.undoManager().redo();
         else proc_.undoManager().undo();

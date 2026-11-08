@@ -244,6 +244,14 @@ int gs_reverb_init(GsReverb *r, int sr)
             r->diff[c][k] = calloc((size_t)r->diff_len[c][k], sizeof(float));
             if (!r->diff[c][k]) return -1;
         }
+    /* SMEAR: longest stage 251 ms x 1.5 (size) + 3 ms modulation */
+    r->smear_len = (int)(0.38f * sr) + (int)(0.004f * sr) + 16;
+    for (int c = 0; c < 2; c++)
+        for (int k = 0; k < GS_SMEAR_STAGES; k++) {
+            r->smear[c][k] = calloc((size_t)r->smear_len, sizeof(float));
+            if (!r->smear[c][k]) return -1;
+        }
+    for (int k = 0; k < GS_SMEAR_STAGES; k++) r->smear_ph[k] = k / (float)GS_SMEAR_STAGES;
     r->pre_len = (int)(0.2f * sr) + 4;
     r->pre = calloc((size_t)r->pre_len * 2, sizeof(float));
     r->size_s = 0.7f;
@@ -254,6 +262,7 @@ void gs_reverb_free(GsReverb *r)
 {
     for (int i = 0; i < GS_REV_LINES; i++) free(r->line[i]);
     for (int c = 0; c < 2; c++) for (int k = 0; k < GS_REV_DIFF; k++) free(r->diff[c][k]);
+    for (int c = 0; c < 2; c++) for (int k = 0; k < GS_SMEAR_STAGES; k++) free(r->smear[c][k]);
     free(r->pre);
     memset(r, 0, sizeof(*r));
 }
@@ -270,19 +279,47 @@ void gs_fx_clear(GsDelay *d, GsReverb *r)
     for (int c = 0; c < 2; c++) for (int k = 0; k < GS_REV_DIFF; k++)
         if (r->diff[c][k]) memset(r->diff[c][k], 0, sizeof(float) * r->diff_len[c][k]);
     if (r->pre) memset(r->pre, 0, sizeof(float) * r->pre_len * 2);
+    for (int c = 0; c < 2; c++) {
+        for (int k = 0; k < GS_SMEAR_STAGES; k++)
+            if (r->smear[c][k]) memset(r->smear[c][k], 0, sizeof(float) * r->smear_len);
+        r->smear_lp[c] = 0;
+    }
 }
 
+static const float SMEAR_MS[GS_SMEAR_STAGES] = {43.0f, 67.0f, 97.0f, 139.0f, 193.0f, 251.0f};
+
 void gs_reverb_process(GsReverb *rv, float *l, float *r, int n, float size, float damp, float width, float pre_ms,
-                       float mod, float mix, int sr)
+                       float mod, float mix, int mode, int sr)
 {
     if (mix <= 0.001f || !rv->pre) return;
+    /* AMBIENT <-> SMEAR crossfade (~50 ms) */
+    const float mtarget = mode == 1 ? 1.0f : 0.0f;
+    const float mk = 1.0f - expf(-(float)n / (0.05f * sr));
+    rv->mode_mix += (mtarget - rv->mode_mix) * mk;
+    if (fabsf(rv->mode_mix - mtarget) < 1e-4f) rv->mode_mix = mtarget;
+    const float sm = rv->mode_mix;
+    /* smear stage delays scale with DECAY; slow, deep modulation keeps it from ringing */
+    float sbase[GS_SMEAR_STAGES], sdep0[GS_SMEAR_STAGES], sdep1[GS_SMEAR_STAGES];
+    const float sscale = 0.6f + 0.9f * size;
+    const float sdepth = (0.0008f + 0.0022f * mod) * sr;
+    for (int k = 0; k < GS_SMEAR_STAGES; k++) {
+        sbase[k] = SMEAR_MS[k] * 0.001f * sr * sscale;
+        if (sbase[k] > rv->smear_len - 2 * sdepth - 8) sbase[k] = rv->smear_len - 2 * sdepth - 8;
+        const float ph0 = rv->smear_ph[k];
+        float ph1 = ph0 + (0.07f + 0.031f * k) / sr * n;
+        ph1 -= floorf(ph1);
+        sdep0[k] = (lfo_sin(ph0) + 1.0f) * sdepth;
+        sdep1[k] = (lfo_sin(ph1) + 1.0f) * sdepth;
+        rv->smear_ph[k] = ph1;
+    }
+    const float s_lp = rate_adapt(0.35f, sr);          /* soften the input to the smear (pad-like) */
     float dryg, wetg; mix_gains(mix, &dryg, &wetg);
 
     /* glide size (~100 ms); derive line lengths and feedback gains for the target decay */
     rv->size_s += (size - rv->size_s) * (1.0f - expf(-(float)n / (0.1f * sr)));
     float sz = rv->size_s;
     float scale = 0.7f + 1.3f * sz;                 /* bigger space as decay grows */
-    float rt = gs_reverb_rt60(sz);
+    float rt = gs_reverb_rt60(sz) * (1.0f + 1.5f * sm);   /* SMEAR: a longer tail */
     float len[GS_REV_LINES], g[GS_REV_LINES], dep0[GS_REV_LINES], dep1[GS_REV_LINES];
     float depth = mod * 0.0035f * sr;               /* up to ~3.5 ms of pitch wobble */
     float rate = 0.6f / sr * n;                     /* lfo advance per block (cycles) */
@@ -298,7 +335,7 @@ void gs_reverb_process(GsReverb *rv, float *l, float *r, int n, float size, floa
         dep1[i] = (lfo_sin(ph1) + 1.0f) * depth;
         rv->lfo_ph[i] = ph1;
     }
-    float a_lp = rate_adapt(1.0f - damp * 0.92f, sr);   /* damping: darker tails */
+    float a_lp = rate_adapt(1.0f - (damp * 0.92f) * (1.0f - 0.25f * sm) - 0.3f * sm * (1.0f - damp), sr);   /* damping (darker when smeared) */
     float a_hp = rate_adapt(0.0035f, sr);               /* ~25 Hz: keep the low end from piling up */
     int pre = (int)(pre_ms * 0.001f * sr);
     if (pre >= rv->pre_len) pre = rv->pre_len - 1;
@@ -328,6 +365,31 @@ void gs_reverb_process(GsReverb *rv, float *l, float *r, int n, float size, floa
                 rv->diff_i[c][k] = idx;
             }
             in[c] = x;
+        }
+
+        /* SMEAR: six long modulated allpasses dissolve every attack into a pad */
+        if (sm > 0.0f) {
+            const float ts = s * inv_n;
+            const int SL = rv->smear_len, w = rv->smear_w;
+            for (int c = 0; c < 2; c++) {
+                rv->smear_lp[c] += s_lp * (in[c] - rv->smear_lp[c]) + DENORM;
+                float x = rv->smear_lp[c];
+                for (int k = 0; k < GS_SMEAR_STAGES; k++) {
+                    float *b = rv->smear[c][k];
+                    const float dl = sbase[k] + (c ? 0.37f * sdepth : 0.0f) + sdep0[k] + (sdep1[k] - sdep0[k]) * ts;
+                    float p = (float)w - dl;
+                    while (p < 0) p += SL;
+                    int i0 = (int)p; float fr = p - i0;
+                    if (i0 >= SL) i0 -= SL;
+                    int i1 = i0 + 1; if (i1 >= SL) i1 = 0;
+                    const float d = b[i0] + (b[i1] - b[i0]) * fr;
+                    const float v = x + d * 0.72f;
+                    b[w] = v;
+                    x = d - v * 0.72f;
+                }
+                in[c] = in[c] * (1.0f - sm) + x * sm * 1.25f;
+            }
+            if (++rv->smear_w >= SL) rv->smear_w = 0;
         }
 
         /* read modulated lines */

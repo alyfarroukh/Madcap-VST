@@ -18,6 +18,11 @@ inline const juce::Colour green    { 0xFF4EE08A };
 inline const juce::Colour text     { 0xFFCFE9E6 };
 inline const juce::Colour textDim  { 0xFF6E8C93 };
 inline const juce::Colour red      { 0xFFFF4B3E };
+// FX modules
+inline const juce::Colour fxDrive  { 0xFFE2581E };
+inline const juce::Colour fxComp   { 0xFFAAB9B7 };
+inline const juce::Colour fxDelay  { 0xFF3FAE62 };
+inline const juce::Colour fxReverb { 0xFF38B2AA };
 } // namespace colours
 
 enum class Weight { Medium, SemiBold, Bold };
